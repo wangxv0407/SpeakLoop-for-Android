@@ -51,10 +51,28 @@ git push -u origin main
 |---|---|
 | v1 | 离线复习播放器：系统 TTS + 前台服务 + 息屏播放 |
 | v1.1 | 语音输入；点开短语可以跟读，逐词对比标出漏读和多读 |
-| v1.2 | 设置里加「测试连接」；AI 报错说清真实原因（模型名错 / 密钥错 / 地址错分开提示） |
+| v1.2 | 设置里加「测试连接」；AI 报错说清真实原因；**换成固定 debug 签名，从此可以直接覆盖安装升级** |
 
 Artifacts 里永远只有一份 `speakloop-debug-apk.zip`，每次构建覆盖成最新那次的结果，
 认准是哪次构建：进去看标题和提交信息就知道。
+
+### 关于签名（v1.2 之后请务必了解）
+
+v1.2 之前的三个包，签名证书**三个都不一样**。原因是 GitHub Actions 每次跑在全新机器上，
+AGP 发现没有 `~/.android/debug.keystore` 就现场生成一把新的，于是：
+
+- v1.1 装不到 v1 上（系统报「应用未安装 / 签名不一致」）
+- 只能先卸载再装，而短语存在 App 私有目录里，**卸载即全部丢失**
+
+v1.2 起把一把固定的 debug keystore 放进仓库（`keystore/debug.keystore`，口令就是公开的 `android`），
+所有构建共用同一把钥匙。所以：
+
+- **最后一次需要卸载重装**：因为新包签名和 v1.2 之前所有包都不同
+- 从 v1.2 往后的版本，都能直接在旧版上覆盖安装，短语不会丢
+
+> 为什么敢把 keystore 传到公开仓库：这只是自用 debug 包，Android 的 debug 密钥本来就是
+> 固定口令 `android`、不做保密的设计，泄露它的唯一后果是别人能用同一把钥匙签一个 App —— 
+> 但别人签的 App 装不到你手机上（要么你主动装，要么需要设备权限）。真要正式发布再换你自己的正式证书。
 
 ### 设置 AI（v1.2 起可以自检）
 
@@ -113,6 +131,8 @@ app/src/main/java/com/speakloop/app/
 ├── Llm.kt               OpenAI 兼容接口，只依赖 HttpURLConnection
 ├── Diff.kt              逐词对比（LCS 对齐），纯算法不碰 Android API
 └── Phrase.kt            数据类
+
+keystore/debug.keystore  固定 debug 签名，让每次 CI 构建的包能互相覆盖安装
 ```
 
 依赖只有 `androidx.appcompat` 和 `androidx.core-ktx`，没有 Room、没有 Retrofit、没有 OkHttp、没有 Compose。

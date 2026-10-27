@@ -7,4 +7,11 @@ captures/
 .externalNativeBuild
 .cxx
 *.apk
+
+# 默认忽略一切签名文件，但固定 debug 签名必须入库：
+# GitHub Actions 每次都是全新机器，AGP 会现场生成一个新的 debug 密钥，
+# 导致每次构建签名不同、新包无法覆盖安装旧包（只能卸载，短语数据会丢）。
+# 所以这里放一个固定的 debug keystore，让所有构建共用同一把钥匙。
 *.keystore
+!keystore/debug.keystore
+*.jks
