@@ -1,6 +1,8 @@
 package com.speakloop.app
 
 import android.Manifest
+import android.app.Activity
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
@@ -8,18 +10,25 @@ import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.text.InputType
+import android.text.SpannableStringBuilder
+import android.text.Spanned
+import android.text.style.ForegroundColorSpan
+import android.text.style.StrikethroughSpan
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
-import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import java.util.Locale
@@ -43,6 +52,28 @@ class MainActivity : AppCompatActivity() {
 
     private var tts: TextToSpeech? = null
     private var ttsReady = false
+
+    /** 语音输入回来后要填哪个输入框 */
+    private var speechTarget: EditText? = null
+
+    /** 跟读用的识别器，同一时间只允许一个 */
+    private var shadow: SpeechRecognizer? = null
+
+    private val speechLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val said = result.data
+                ?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+                ?.firstOrNull()
+            val target = speechTarget
+            if (!said.isNullOrBlank() && target != null) {
+                target.setText(said)
+                target.setSelection(said.length)
+            }
+        }
+        speechTarget = null
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -72,6 +103,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        shadow?.destroy()
+        shadow = null
         tts?.stop()
         tts?.shutdown()
         tts = null
@@ -196,7 +229,7 @@ class MainActivity : AppCompatActivity() {
             hint.text = "还没有短语。点右上角「＋ 短语」加一条。"
             return
         }
-        hint.text = "共 ${phrases.size} 条 · 长按可删除 · 点一下听发音"
+        hint.text = "共 ${phrases.size} 条 · 点一条跟读 · 长按删除"
 
         for (p in phrases) {
             listBox.addView(card(p))
@@ -211,7 +244,7 @@ class MainActivity : AppCompatActivity() {
                 cornerRadius = dp(14).toFloat()
                 setColor(cCard)
             }
-            setOnClickListener { speak(p.phrase) }
+            setOnClickListener { openDetail(p) }
             setOnLongClickListener {
                 confirmDelete(p)
                 true
@@ -305,6 +338,21 @@ class MainActivity : AppCompatActivity() {
             setTextColor(cDim)
         }
         box.addView(input)
+        box.addView(
+            pill("🎤 说一遍", cCard).apply {
+                setOnClickListener {
+                    speechTarget = input
+                    startVoiceInput()
+                }
+            },
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                topMargin = dp(8)
+                bottomMargin = dp(4)
+            }
+        )
         box.addView(autoFill)
 
         AlertDialog.Builder(this)
@@ -439,8 +487,197 @@ class MainActivity : AppCompatActivity() {
         inputType = InputType.TYPE_CLASS_TEXT
     }
 
-    private fun startReview() {
-        val intent = Intent(this, ReviewService::class.java).setAction(ReviewService.ACTION_START)
+    // ---------- 语音输入 & 跟读 ----------
+
+    /** 调系统语音输入界面。不用自己申请麦克风权限，识别工作由系统界面完成。 */
+    private fun startVoiceInput() {
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(
+                RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
+            )
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-US")
+            putExtra(RecognizerIntent.EXTRA_PROMPT, "说一遍短语")
+        }
+        try {
+            speechLauncher.launch(intent)
+        } catch (e: ActivityNotFoundException) {
+            Toast.makeText(this, "这台手机没有语音识别服务，手打一下吧", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun openDetail(p: Phrase) {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(8), dp(20), dp(12))
+        }
+
+        box.addView(TextView(this).apply {
+            text = p.phrase
+            setTextColor(cFg)
+            textSize = 20f
+        })
+        if (p.meaning.isNotBlank()) {
+            box.addView(TextView(this).apply {
+                text = p.meaning
+                setTextColor(cDim)
+                textSize = 14f
+                setPadding(0, dp(4), 0, 0)
+            })
+        }
+
+        if (p.examples.isNotEmpty()) {
+            box.addView(sectionTitle("例句"))
+            for (s in p.examples) box.addView(lineView("· $s"))
+        }
+        if (p.dialogue.isNotEmpty()) {
+            box.addView(sectionTitle("情景对话"))
+            for (l in p.dialogue) box.addView(lineView("${l.speaker}: ${l.text}"))
+        }
+
+        box.addView(sectionTitle("跟读对比"))
+        val result = TextView(this).apply {
+            text = "点「开始跟读」，说完停一下\n红字加删除线＝漏读，黄字＝多读"
+            setTextColor(cDim)
+            textSize = 15f
+            setPadding(0, dp(4), 0, dp(10))
+        }
+        box.addView(result)
+
+        val actions = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        actions.addView(pill("🔊 朗读", cCard).apply {
+            setOnClickListener { speak(p.phrase) }
+        })
+        actions.addView(
+            pill("🎤 开始跟读", cAccent).apply {
+                setOnClickListener { startShadow(p, result) }
+            },
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { leftMargin = dp(8) }
+        )
+        box.addView(actions)
+
+        AlertDialog.Builder(this)
+            .setTitle("短语详情")
+            .setView(ScrollView(this).apply { addView(box) })
+            .setNegativeButton("关闭", null)
+            .show()
+    }
+
+    private fun sectionTitle(t: String): TextView = TextView(this).apply {
+        text = t
+        setTextColor(cAccent)
+        textSize = 12f
+        setPadding(0, dp(14), 0, dp(4))
+    }
+
+    private fun lineView(t: String): TextView = TextView(this).apply {
+        text = t
+        setTextColor(cFg)
+        textSize = 14f
+        setPadding(0, dp(3), 0, 0)
+    }
+
+    /** 在 App 内录音识别，需要 RECORD_AUDIO 权限。 */
+    private fun startShadow(p: Phrase, result: TextView) {
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 2)
+            result.text = "先允许录音权限，然后再点一次「开始跟读」"
+            return
+        }
+        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+            result.text = "这台手机没有可用的语音识别服务"
+            return
+        }
+
+        shadow?.destroy()
+        val recognizer = SpeechRecognizer.createSpeechRecognizer(this)
+        shadow = recognizer
+        recognizer.setRecognitionListener(object : RecognitionListener {
+            override fun onReadyForSpeech(params: Bundle?) {
+                result.text = "在听……说完停一下"
+            }
+
+            override fun onBeginningOfSpeech() {}
+
+            override fun onRmsChanged(rmsdB: Float) {}
+
+            override fun onBufferReceived(buffer: ByteArray?) {}
+
+            override fun onEndOfSpeech() {
+                result.text = "识别中……"
+            }
+
+            override fun onError(error: Int) {
+                result.text = "没听清（错误码 $error），再试一次"
+                recognizer.destroy()
+                if (shadow === recognizer) shadow = null
+            }
+
+            override fun onResults(results: Bundle?) {
+                val heard = results
+                    ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                    ?.firstOrNull()
+                    .orEmpty()
+                result.text = if (heard.isBlank()) {
+                    "这次没听到内容，再试一次"
+                } else {
+                    renderDiff(p.phrase, heard)
+                }
+                recognizer.destroy()
+                if (shadow === recognizer) shadow = null
+            }
+
+            override fun onPartialResults(partialResults: Bundle?) {}
+
+            override fun onEvent(eventType: Int, params: Bundle?) {}
+        })
+
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(
+                RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
+            )
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-US")
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+        }
+        recognizer.startListening(intent)
+    }
+
+    private fun renderDiff(ref: String, heard: String): CharSequence {
+        val tokens = Diff.align(ref, heard)
+        val sb = SpannableStringBuilder()
+        for (t in tokens) {
+            val start = sb.length
+            sb.append(t.text).append(' ')
+            val end = start + t.text.length
+            val flag = Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+            when (t.status) {
+                Diff.MISSING -> {
+                    sb.setSpan(ForegroundColorSpan(Color.parseColor("#FF6B6B")), start, end, flag)
+                    sb.setSpan(StrikethroughSpan(), start, end, flag)
+                }
+
+                Diff.EXTRA -> sb.setSpan(
+                    ForegroundColorSpan(Color.parseColor("#FFC857")), start, end, flag
+                )
+
+                else -> sb.setSpan(ForegroundColorSpan(cFg), start, end, flag)
+            }
+        }
+        sb.append("\n\n命中率 ${Diff.accuracy(tokens)}%")
+        return sb
+    }
+
+    private fun startReview() {        val intent = Intent(this, ReviewService::class.java).setAction(ReviewService.ACTION_START)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(intent)
         } else {
