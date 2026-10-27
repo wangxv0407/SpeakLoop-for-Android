@@ -436,10 +436,11 @@ class MainActivity : AppCompatActivity() {
     private fun showSettingsDialog() {
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(8), dp(20), 0)
+            setPadding(dp(20), dp(8), dp(20), dp(4))
         }
 
-        val baseUrl = field("Base URL", prefs.getString("baseUrl", "https://apihub.agnes-ai.com/v1")!!)
+        val baseUrl =
+            field("Base URL", prefs.getString("baseUrl", "https://apihub.agnes-ai.com/v1")!!)
         val apiKey = field("API Key", prefs.getString("apiKey", "")!!)
         val model = field("模型", prefs.getString("model", "agnes-2.5-flash")!!)
         val loopBox = CheckBox(this).apply {
@@ -448,17 +449,70 @@ class MainActivity : AppCompatActivity() {
             setTextColor(cDim)
         }
 
-        box.addView(label("Base URL"))
+        val testResult = TextView(this).apply {
+            text = "点「测试连接」，验证地址 / 密钥 / 模型三项是否都正确"
+            setTextColor(cDim)
+            textSize = 13f
+            setPadding(0, dp(10), 0, 0)
+        }
+
+        val testBtn = pill("🔍 测试连接", cAccent).apply {
+            setOnClickListener {
+                val bu = baseUrl.text.toString()
+                val k = apiKey.text.toString()
+                val m = model.text.toString()
+                if (bu.isBlank() || k.isBlank() || m.isBlank()) {
+                    testResult.setTextColor(Color.parseColor("#FF6B6B"))
+                    testResult.text = "Base URL、API Key、模型三项都要填"
+                    return@setOnClickListener
+                }
+                testResult.setTextColor(cDim)
+                testResult.text = "测试中……（推理模型可能要几秒）"
+                thread {
+                    var ok = true
+                    val msg: String
+                    try {
+                        val r = Llm.test(bu, k.trim(), m.trim())
+                        msg = buildString {
+                            append("✅ 连接成功\n")
+                            append("请求地址：").append(r.endpoint).append('\n')
+                            append("模型：").append(m.trim()).append('\n')
+                            append("用时：").append(r.millis).append(" ms\n")
+                            append("回复：").append(r.reply.ifBlank { "(空)" })
+                        }
+                    } catch (e: Exception) {
+                        ok = false
+                        msg = "❌ " + (e.message ?: e.javaClass.simpleName)
+                    }
+                    runOnUiThread {
+                        testResult.setTextColor(
+                            if (ok) Color.parseColor("#6BCB77") else Color.parseColor("#FF6B6B")
+                        )
+                        testResult.text = msg
+                    }
+                }
+            }
+        }
+
+        box.addView(label("Base URL（只填到 /v1，不要带 /chat/completions）"))
         box.addView(baseUrl)
         box.addView(label("API Key"))
         box.addView(apiKey)
         box.addView(label("模型"))
         box.addView(model)
+        box.addView(
+            testBtn,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(14) }
+        )
+        box.addView(testResult)
         box.addView(loopBox)
 
         AlertDialog.Builder(this)
             .setTitle("设置")
-            .setView(box)
+            .setView(ScrollView(this).apply { addView(box) })
             .setPositiveButton("保存") { _, _ ->
                 prefs.edit()
                     .putString("baseUrl", baseUrl.text.toString().trim().ifBlank { "https://apihub.agnes-ai.com/v1" })
