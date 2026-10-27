@@ -2,6 +2,7 @@ package com.speakloop.app
 
 import android.content.ContentValues
 import android.content.Context
+import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import org.json.JSONArray
@@ -40,24 +41,37 @@ class Db(context: Context) :
             null
         )
         try {
-            while (cursor.moveToNext()) {
-                out.add(
-                    Phrase(
-                        id = cursor.getLong(0),
-                        phrase = cursor.getString(1) ?: "",
-                        meaning = cursor.getString(2) ?: "",
-                        examples = decodeList(cursor.getString(3)),
-                        dialogue = decodeLines(cursor.getString(4)),
-                        playCount = cursor.getInt(5),
-                        createdAt = cursor.getLong(6)
-                    )
-                )
-            }
+            while (cursor.moveToNext()) out.add(read(cursor))
         } finally {
             cursor.close()
         }
         return out
     }
+
+    /** 详情页按 id 取一条。返回 null 表示这条已经被删了。 */
+    fun byId(id: Long): Phrase? {
+        val cursor = readableDatabase.rawQuery(
+            "SELECT id, phrase, meaning, examples, dialogue, play_count, created_at " +
+                "FROM phrase WHERE id = ? LIMIT 1",
+            arrayOf(id.toString())
+        )
+        try {
+            return if (cursor.moveToFirst()) read(cursor) else null
+        } finally {
+            cursor.close()
+        }
+    }
+
+    /** 列顺序必须和上面两条 SQL 的 SELECT 一致。 */
+    private fun read(cursor: Cursor): Phrase = Phrase(
+        id = cursor.getLong(0),
+        phrase = cursor.getString(1) ?: "",
+        meaning = cursor.getString(2) ?: "",
+        examples = decodeList(cursor.getString(3)),
+        dialogue = decodeLines(cursor.getString(4)),
+        playCount = cursor.getInt(5),
+        createdAt = cursor.getLong(6)
+    )
 
     fun insert(p: Phrase): Long {
         val v = ContentValues()

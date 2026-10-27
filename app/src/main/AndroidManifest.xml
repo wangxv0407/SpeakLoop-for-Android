@@ -35,6 +35,12 @@
             </intent-filter>
         </activity>
 
+        <!-- 短语详情单独一屏，不再用弹窗 -->
+        <activity
+            android:name=".DetailActivity"
+            android:exported="false"
+            android:parentActivityName=".MainActivity" />
+
         <service
             android:name=".ReviewService"
             android:exported="false"

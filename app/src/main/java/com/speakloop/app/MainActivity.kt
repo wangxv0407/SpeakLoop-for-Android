@@ -6,24 +6,18 @@ import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
-import android.graphics.Color
-import android.graphics.drawable.GradientDrawable
+import android.content.res.ColorStateList
 import android.os.Build
 import android.os.Bundle
-import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
-import android.speech.SpeechRecognizer
-import android.speech.tts.TextToSpeech
 import android.text.InputType
-import android.text.SpannableStringBuilder
-import android.text.Spanned
-import android.text.style.ForegroundColorSpan
-import android.text.style.StrikethroughSpan
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.CheckBox
 import android.widget.EditText
+import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -31,33 +25,26 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
-import java.util.Locale
 import kotlin.concurrent.thread
 
 /**
- * 单页界面，全部用代码搭。短语量级是几十条，直接用 LinearLayout 列表就够，
- * 不引 RecyclerView 也就少一个依赖。
+ * 列表页：短语库 + 开始复习。
+ *
+ * 界面全部用代码搭。短语量级是几十条，直接用 LinearLayout 列表就够，
+ * 不引 RecyclerView 也就少一个依赖。点一条进入 [DetailActivity]。
  */
 class MainActivity : AppCompatActivity() {
 
-    private val cBg = Color.parseColor("#0E1116")
-    private val cCard = Color.parseColor("#1B2430")
-    private val cFg = Color.parseColor("#E6EDF3")
-    private val cDim = Color.parseColor("#8B98A5")
-    private val cAccent = Color.parseColor("#4C9AFF")
-
     private lateinit var prefs: SharedPreferences
-    private lateinit var listBox: LinearLayout
-    private lateinit var hint: TextView
 
-    private var tts: TextToSpeech? = null
-    private var ttsReady = false
+    private lateinit var scroll: ScrollView
+    private lateinit var listBox: LinearLayout
+    private lateinit var emptyView: View
+    private lateinit var countLabel: TextView
+    private lateinit var pauseBtn: ImageView
 
     /** 语音输入回来后要填哪个输入框 */
     private var speechTarget: EditText? = null
-
-    /** 跟读用的识别器，同一时间只允许一个 */
-    private var shadow: SpeechRecognizer? = null
 
     private val speechLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -75,6 +62,8 @@ class MainActivity : AppCompatActivity() {
         speechTarget = null
     }
 
+    private fun dp(v: Int): Int = Ui.dp(this, v)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         prefs = getSharedPreferences("speakloop", MODE_PRIVATE)
@@ -87,135 +76,220 @@ class MainActivity : AppCompatActivity() {
             db.close()
         }
 
-        tts = TextToSpeech(this) { status ->
-            ttsReady = status == TextToSpeech.SUCCESS
-            if (ttsReady) tts?.language = Locale.US
-        }
-
         if (Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
             PackageManager.PERMISSION_GRANTED
         ) {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
         }
-
-        refresh()
     }
 
-    override fun onDestroy() {
-        shadow?.destroy()
-        shadow = null
-        tts?.stop()
-        tts?.shutdown()
-        tts = null
-        super.onDestroy()
+    /** 从详情页返回时要刷新（可能删了一条），顺带同步播放条的图标状态。 */
+    override fun onResume() {
+        super.onResume()
+        refresh()
+        syncPlayerBar()
     }
 
     // ---------- 界面 ----------
 
-    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
-
     private fun buildRoot(): View {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(cBg)
+            setBackgroundColor(Ui.BG)
         }
+        root.addView(buildHeader())
 
-        // 顶栏
-        val header = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(16), dp(14), dp(16), dp(10))
+        val body = FrameLayout(this)
+        scroll = ScrollView(this).apply {
+            isVerticalScrollBarEnabled = false
+            clipToPadding = false
         }
-        header.addView(
-            TextView(this).apply {
-                text = "SpeakLoop"
-                setTextColor(cFg)
-                textSize = 20f
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-            }
-        )
-        header.addView(
-            pill("＋ 短语", cAccent).apply { setOnClickListener { showAddDialog() } }
-        )
-        header.addView(
-            pill("设置", cCard).apply {
-                setOnClickListener { showSettingsDialog() }
-            },
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { leftMargin = dp(8) }
-        )
-        root.addView(header)
-
-        // 列表
-        val scroll = ScrollView(this)
         listBox = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(12), 0, dp(12), dp(12))
+            // 底部留白给悬浮按钮，最后一张卡片才不会被挡住
+            setPadding(dp(18), dp(4), dp(18), dp(120))
         }
         scroll.addView(listBox)
-        root.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-
-        hint = TextView(this).apply {
-            setTextColor(cDim)
-            textSize = 13f
-            gravity = Gravity.CENTER
-            setPadding(dp(16), dp(10), dp(16), dp(4))
-        }
-        root.addView(hint)
-
-        // 底部控制条
-        val bar = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(dp(12), dp(6), dp(12), dp(16))
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        bar.addView(
-            pill("▶ 开始复习", cAccent).apply {
-                setOnClickListener { startReview() }
-            },
-            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        body.addView(
+            scroll,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
         )
-        bar.addView(
-            pill("⏸ 暂停", cCard).apply {
-                setOnClickListener {
-                    sendService(ReviewService.ACTION_TOGGLE)
-                    // 服务是异步处理的，这里读不到即时状态，所以只给中性提示
-                    Toast.makeText(this@MainActivity, "已切换暂停/继续", Toast.LENGTH_SHORT).show()
-                }
-            },
-            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                .apply { leftMargin = dp(8) }
-        )
-        bar.addView(
-            pill("⏹ 停止", cCard).apply {
-                setOnClickListener { sendService(ReviewService.ACTION_STOP) }
-            },
-            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                .apply { leftMargin = dp(8) }
-        )
-        root.addView(bar)
 
+        emptyView = buildEmpty()
+        body.addView(
+            emptyView,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        )
+
+        body.addView(
+            buildFab(),
+            FrameLayout.LayoutParams(dp(58), dp(58), Gravity.BOTTOM or Gravity.END).apply {
+                rightMargin = dp(20)
+                bottomMargin = dp(24)
+            }
+        )
+
+        root.addView(
+            body,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
+        )
+        root.addView(buildPlayerBar())
         return root
     }
 
-    private fun pill(label: String, bg: Int): TextView {
-        return TextView(this).apply {
-            text = label
-            setTextColor(if (bg == cAccent) Color.parseColor("#08121F") else cFg)
-            textSize = 14f
-            gravity = Gravity.CENTER
-            setPadding(dp(14), dp(9), dp(14), dp(9))
-            background = GradientDrawable().apply {
-                cornerRadius = dp(18).toFloat()
-                setColor(bg)
-            }
+    private fun buildHeader(): View {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(22), dp(18), dp(18), dp(8))
         }
+
+        val topRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        topRow.addView(
+            Ui.text(this, "SPEAKLOOP", 11f, Ui.ACCENT, true).apply { letterSpacing = 0.24f },
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        )
+        topRow.addView(Ui.iconButton(this, R.drawable.ic_tune, Ui.DIM, 40) {
+            showSettingsDialog()
+        })
+        box.addView(topRow)
+
+        box.addView(
+            Ui.text(this, "短语库", 30f, Ui.FG, true).apply { setPadding(0, dp(8), 0, 0) }
+        )
+        countLabel = Ui.text(this, "", 13f, Ui.MUTED).apply { setPadding(0, dp(6), 0, dp(12)) }
+        box.addView(countLabel)
+        return box
     }
 
+    private fun buildEmpty(): View {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(dp(44), 0, dp(44), dp(90))
+            visibility = View.GONE
+        }
+        box.addView(Ui.icon(this, R.drawable.ic_wave, Ui.STROKE, 64))
+        box.addView(
+            Ui.text(this, "还没有短语", 17f, Ui.FG, true).apply {
+                setPadding(0, dp(18), 0, 0)
+                gravity = Gravity.CENTER
+            }
+        )
+        box.addView(
+            Ui.text(this, "点右下角 ＋ 加一条\nAI 会顺手补上释义、例句和情景对话", 13f, Ui.MUTED)
+                .apply {
+                    setPadding(0, dp(8), 0, 0)
+                    gravity = Gravity.CENTER
+                    setLineSpacing(dp(5).toFloat(), 1f)
+                }
+        )
+        return box
+    }
+
+    private fun buildFab(): View = ImageView(this).apply {
+        setImageResource(R.drawable.ic_add)
+        imageTintList = ColorStateList.valueOf(Ui.ON_ACCENT)
+        scaleType = ImageView.ScaleType.CENTER_INSIDE
+        setPadding(dp(17), dp(17), dp(17), dp(17))
+        background = Ui.ripple(this@MainActivity, 29, Ui.ACCENT, 0, Ui.STROKE, 0x50000000)
+        elevation = dp(10).toFloat()
+        isClickable = true
+        setOnClickListener { showAddDialog() }
+    }
+
+    private fun buildPlayerBar(): View {
+        val bar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(20), dp(8), dp(20), dp(22))
+        }
+        bar.addView(
+            Ui.button(this, "开始复习", R.drawable.ic_play, true) { startReview() },
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        )
+        pauseBtn = Ui.iconButton(this, R.drawable.ic_pause, Ui.FG, 50) { togglePause() }
+        bar.addView(
+            pauseBtn,
+            LinearLayout.LayoutParams(dp(50), dp(50)).apply { leftMargin = dp(10) }
+        )
+        bar.addView(
+            Ui.iconButton(this, R.drawable.ic_stop, Ui.DIM, 50) {
+                sendService(ReviewService.ACTION_STOP)
+                pauseBtn.postDelayed({ syncPlayerBar() }, 150)
+            },
+            LinearLayout.LayoutParams(dp(50), dp(50)).apply { leftMargin = dp(10) }
+        )
+        return bar
+    }
+
+    private fun phraseCard(p: Phrase): View {
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(18), dp(16), dp(14), dp(16))
+            background = Ui.ripple(this@MainActivity, 20, Ui.SURFACE, 1, Ui.STROKE)
+            isClickable = true
+            setOnClickListener { openDetail(p.id) }
+            setOnLongClickListener {
+                confirmDelete(p)
+                true
+            }
+        }
+
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        col.addView(Ui.text(this, p.phrase, 18f, Ui.FG, true))
+        if (p.meaning.isNotBlank()) {
+            col.addView(
+                Ui.text(this, p.meaning, 13f, Ui.DIM).apply {
+                    setPadding(0, dp(6), 0, 0)
+                    setLineSpacing(dp(3).toFloat(), 1f)
+                }
+            )
+        }
+
+        val chips = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(11), 0, 0)
+        }
+        chips.addView(Ui.chip(this, "播过 ${p.playCount} 次"))
+        if (p.examples.isNotEmpty()) {
+            chips.addView(Ui.chip(this, "${p.examples.size} 句例句"), chipParams())
+        }
+        if (p.dialogue.isNotEmpty()) {
+            chips.addView(Ui.chip(this, "${p.dialogue.size} 句对话"), chipParams())
+        }
+        col.addView(chips)
+
+        card.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        card.addView(
+            Ui.icon(this, R.drawable.ic_chevron, Ui.MUTED, 20),
+            LinearLayout.LayoutParams(dp(20), dp(20)).apply { leftMargin = dp(6) }
+        )
+        card.layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { bottomMargin = dp(10) }
+        return card
+    }
+
+    private fun chipParams(): LinearLayout.LayoutParams =
+        LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { leftMargin = dp(6) }
+
     private fun refresh() {
+        val keepY = scroll.scrollY
         val db = Db(this)
         val phrases: List<Phrase>
         try {
@@ -225,86 +299,30 @@ class MainActivity : AppCompatActivity() {
         }
 
         listBox.removeAllViews()
-        if (phrases.isEmpty()) {
-            hint.text = "还没有短语。点右上角「＋ 短语」加一条。"
-            return
+        countLabel.text = if (phrases.isEmpty()) {
+            "按复习优先级排序 · 播得少的在前"
+        } else {
+            "共 ${phrases.size} 条 · 点开跟读 · 长按删除"
         }
-        hint.text = "共 ${phrases.size} 条 · 点一条跟读 · 长按删除"
+        emptyView.visibility = if (phrases.isEmpty()) View.VISIBLE else View.GONE
+        for (p in phrases) listBox.addView(phraseCard(p))
 
-        for (p in phrases) {
-            listBox.addView(card(p))
-        }
-    }
-
-    private fun card(p: Phrase): View {
-        val box = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(14), dp(12), dp(14), dp(12))
-            background = GradientDrawable().apply {
-                cornerRadius = dp(14).toFloat()
-                setColor(cCard)
-            }
-            setOnClickListener { openDetail(p) }
-            setOnLongClickListener {
-                confirmDelete(p)
-                true
-            }
-        }
-
-        box.addView(
-            TextView(this).apply {
-                text = p.phrase
-                setTextColor(cFg)
-                textSize = 17f
-            }
-        )
-
-        if (p.meaning.isNotBlank()) {
-            box.addView(
-                TextView(this).apply {
-                    text = p.meaning
-                    setTextColor(cDim)
-                    textSize = 13f
-                    setPadding(0, dp(4), 0, 0)
-                }
-            )
-        }
-
-        val meta = buildString {
-            append("播过 ${p.playCount} 次")
-            if (p.examples.isNotEmpty()) append(" · ${p.examples.size} 句例句")
-            if (p.dialogue.isNotEmpty()) append(" · ${p.dialogue.size} 句对话")
-        }
-        box.addView(
-            TextView(this).apply {
-                text = meta
-                setTextColor(Color.parseColor("#5C6875"))
-                textSize = 12f
-                setPadding(0, dp(6), 0, 0)
-            }
-        )
-
-        return box.apply {
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = dp(8) }
-        }
+        // 重建列表会回到顶部，把原来的滚动位置还回去
+        if (keepY > 0) scroll.post { scroll.scrollTo(0, keepY) }
     }
 
     // ---------- 交互 ----------
 
-    private fun speak(text: String) {
-        if (!ttsReady) {
-            Toast.makeText(this, "语音引擎还没就绪", Toast.LENGTH_SHORT).show()
-            return
-        }
-        tts?.setSpeechRate(0.9f)
-        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "ui")
+    private fun openDetail(id: Long) {
+        startActivity(
+            Intent(this, DetailActivity::class.java).putExtra(DetailActivity.EXTRA_ID, id)
+        )
+        @Suppress("DEPRECATION")
+        overridePendingTransition(R.anim.slide_in_right, R.anim.fade_out)
     }
 
     private fun confirmDelete(p: Phrase) {
-        AlertDialog.Builder(this)
+        val dialog = AlertDialog.Builder(this)
             .setTitle("删除「${p.phrase}」？")
             .setMessage("删掉就找不回来了。")
             .setPositiveButton("删除") { _, _ ->
@@ -317,77 +335,124 @@ class MainActivity : AppCompatActivity() {
                 refresh()
             }
             .setNegativeButton("取消", null)
-            .show()
+            .create()
+        dialog.show()
+        Ui.roundDialog(dialog, this)
     }
+
+    private fun togglePause() {
+        if (!ReviewService.running) {
+            Toast.makeText(this, "还没开始复习", Toast.LENGTH_SHORT).show()
+            return
+        }
+        // 服务是异步处理的，这里先在切换前读一次状态，提示才说得准
+        val wasPaused = ReviewService.paused
+        sendService(ReviewService.ACTION_TOGGLE)
+        Toast.makeText(this, if (wasPaused) "继续播放" else "已暂停", Toast.LENGTH_SHORT).show()
+        pauseBtn.postDelayed({ syncPlayerBar() }, 200)
+    }
+
+    /** 暂停键的图标跟着真实播放状态走，没在播就变灰。 */
+    private fun syncPlayerBar() {
+        if (!::pauseBtn.isInitialized) return
+        when {
+            !ReviewService.running -> {
+                pauseBtn.setImageResource(R.drawable.ic_pause)
+                pauseBtn.imageTintList = ColorStateList.valueOf(Ui.MUTED)
+            }
+
+            ReviewService.paused -> {
+                pauseBtn.setImageResource(R.drawable.ic_play)
+                pauseBtn.imageTintList = ColorStateList.valueOf(Ui.FG)
+            }
+
+            else -> {
+                pauseBtn.setImageResource(R.drawable.ic_pause)
+                pauseBtn.imageTintList = ColorStateList.valueOf(Ui.FG)
+            }
+        }
+    }
+
+    private fun startReview() {
+        val intent = Intent(this, ReviewService::class.java).setAction(ReviewService.ACTION_START)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(intent)
+        } else {
+            startService(intent)
+        }
+        Toast.makeText(this, "开始复习，锁屏也会继续", Toast.LENGTH_SHORT).show()
+        pauseBtn.postDelayed({ syncPlayerBar() }, 300)
+    }
+
+    private fun sendService(action: String) {
+        startService(Intent(this, ReviewService::class.java).setAction(action))
+    }
+
+    // ---------- 新增短语 ----------
 
     private fun showAddDialog() {
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(8), dp(20), 0)
+            setPadding(dp(22), dp(2), dp(22), dp(2))
         }
-        val input = EditText(this).apply {
-            hint = "例如 Forgive me for"
-            setTextColor(cFg)
-            setHintTextColor(cDim)
-            inputType = InputType.TYPE_CLASS_TEXT
-        }
+
+        val input = inputField("例如 Forgive me for", "")
+        val hasKey = prefs.getString("apiKey", "").orEmpty().isNotBlank()
         val autoFill = CheckBox(this).apply {
             text = "用 AI 补全释义和例句"
-            isChecked = prefs.getString("apiKey", "").orEmpty().isNotBlank()
-            isEnabled = prefs.getString("apiKey", "").orEmpty().isNotBlank()
-            setTextColor(cDim)
+            isChecked = hasKey
+            isEnabled = hasKey
+            setTextColor(if (hasKey) Ui.DIM else Ui.MUTED)
+            buttonTintList = ColorStateList.valueOf(Ui.ACCENT)
+            setPadding(0, dp(12), 0, 0)
         }
+
         box.addView(input)
         box.addView(
-            pill("🎤 说一遍", cCard).apply {
-                setOnClickListener {
-                    speechTarget = input
-                    startVoiceInput()
-                }
+            Ui.button(this, "说一遍", R.drawable.ic_mic, false) {
+                speechTarget = input
+                startVoiceInput()
             },
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply {
-                topMargin = dp(8)
-                bottomMargin = dp(4)
-            }
+            ).apply { topMargin = dp(10) }
         )
         box.addView(autoFill)
 
-        AlertDialog.Builder(this)
+        val dialog = AlertDialog.Builder(this)
             .setTitle("添加短语")
             .setView(box)
             .setPositiveButton("保存", null)
             .setNegativeButton("取消", null)
             .create()
-            .also { dialog ->
-                dialog.setOnShowListener {
-                    dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                        val text = input.text.toString().trim()
-                        if (text.isEmpty()) {
-                            input.error = "先写一个短语"
-                            return@setOnClickListener
-                        }
-                        dialog.dismiss()
-                        savePhrase(text, autoFill.isChecked)
-                    }
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val text = input.text.toString().trim()
+                if (text.isEmpty()) {
+                    input.error = "先写一个短语"
+                    return@setOnClickListener
                 }
+                dialog.dismiss()
+                savePhrase(text, autoFill.isChecked)
             }
-            .show()
+        }
+        dialog.show()
+        Ui.roundDialog(dialog, this)
     }
 
     private fun savePhrase(text: String, useAi: Boolean) {
-        val db = Db(this)
-        try {
-            if (!useAi) {
+        if (!useAi) {
+            val db = Db(this)
+            val id = try {
                 db.insert(Phrase(phrase = text))
-                refresh()
-                Toast.makeText(this, "已保存", Toast.LENGTH_SHORT).show()
-                return
+            } finally {
+                db.close()
             }
-        } finally {
-            db.close()
+            refresh()
+            Toast.makeText(this, "已保存", Toast.LENGTH_SHORT).show()
+            openDetail(id)
+            return
         }
 
         Toast.makeText(this, "正在让 AI 补全……", Toast.LENGTH_SHORT).show()
@@ -406,67 +471,81 @@ class MainActivity : AppCompatActivity() {
             }
 
             runOnUiThread {
+                // 先落到本地变量，避免闭包里对可变的 enriched 做智能转换
+                val got = enriched
                 val inner = Db(this)
-                try {
-                    if (enriched == null) {
+                val newId = try {
+                    if (got == null) {
                         // AI 失败也把短语存下来，别让用户白输入
                         inner.insert(Phrase(phrase = text))
-                        Toast.makeText(
-                            this, "AI 没成功（$error），短语已保存", Toast.LENGTH_LONG
-                        ).show()
                     } else {
                         inner.insert(
                             Phrase(
                                 phrase = text,
-                                meaning = enriched.meaning,
-                                examples = enriched.examples,
-                                dialogue = enriched.dialogue
+                                meaning = got.meaning,
+                                examples = got.examples,
+                                dialogue = got.dialogue
                             )
                         )
-                        Toast.makeText(this, "已保存并补全", Toast.LENGTH_SHORT).show()
                     }
                 } finally {
                     inner.close()
                 }
+
+                Toast.makeText(
+                    this,
+                    if (got == null) "AI 没成功（${error ?: "未知原因"}），短语已保存" else "已保存并补全",
+                    Toast.LENGTH_LONG
+                ).show()
                 refresh()
+                openDetail(newId)
             }
         }
     }
 
+    // ---------- 设置 ----------
+
     private fun showSettingsDialog() {
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(8), dp(20), dp(4))
+            setPadding(dp(22), dp(0), dp(22), dp(4))
         }
 
         val baseUrl =
-            field("Base URL", prefs.getString("baseUrl", "https://apihub.agnes-ai.com/v1")!!)
-        val apiKey = field("API Key", prefs.getString("apiKey", "")!!)
-        val model = field("模型", prefs.getString("model", "agnes-2.5-flash")!!)
+            inputField("https://apihub.agnes-ai.com/v1", prefs.getString("baseUrl", "")!!)
+        val apiKey = inputField("sk-...", prefs.getString("apiKey", "")!!)
+        val model = inputField("agnes-2.5-flash", prefs.getString("model", "agnes-2.5-flash")!!)
+
+        val testResult = Ui.text(this, "", 13f, Ui.MUTED).apply {
+            setPadding(0, dp(10), 0, 0)
+            setLineSpacing(dp(4).toFloat(), 1f)
+        }
+
         val loopBox = CheckBox(this).apply {
             text = "循环播放（骑车时建议开）"
             isChecked = prefs.getBoolean("loop", true)
-            setTextColor(cDim)
+            setTextColor(Ui.DIM)
+            buttonTintList = ColorStateList.valueOf(Ui.ACCENT)
+            setPadding(0, dp(14), 0, 0)
         }
 
-        val testResult = TextView(this).apply {
-            text = "点「测试连接」，验证地址 / 密钥 / 模型三项是否都正确"
-            setTextColor(cDim)
-            textSize = 13f
-            setPadding(0, dp(10), 0, 0)
-        }
-
-        val testBtn = pill("🔍 测试连接", cAccent).apply {
-            setOnClickListener {
+        box.addView(fieldLabel("Base URL（只填到 /v1）"))
+        box.addView(baseUrl)
+        box.addView(fieldLabel("API Key"))
+        box.addView(apiKey)
+        box.addView(fieldLabel("模型"))
+        box.addView(model)
+        box.addView(
+            Ui.button(this, "测试连接", null, true) {
                 val bu = baseUrl.text.toString()
                 val k = apiKey.text.toString()
                 val m = model.text.toString()
                 if (bu.isBlank() || k.isBlank() || m.isBlank()) {
-                    testResult.setTextColor(Color.parseColor("#FF6B6B"))
+                    testResult.setTextColor(Ui.BAD)
                     testResult.text = "Base URL、API Key、模型三项都要填"
-                    return@setOnClickListener
+                    return@button
                 }
-                testResult.setTextColor(cDim)
+                testResult.setTextColor(Ui.MUTED)
                 testResult.text = "测试中……（推理模型可能要几秒）"
                 thread {
                     // Kotlin 不允许同一个 val 在 try 和 catch 里各赋一次，这里必须用 var
@@ -486,63 +565,64 @@ class MainActivity : AppCompatActivity() {
                         msg = "❌ " + (e.message ?: e.javaClass.simpleName)
                     }
                     runOnUiThread {
-                        testResult.setTextColor(
-                            if (ok) Color.parseColor("#6BCB77") else Color.parseColor("#FF6B6B")
-                        )
+                        testResult.setTextColor(if (ok) Ui.GOOD else Ui.BAD)
                         testResult.text = msg
                     }
                 }
-            }
-        }
-
-        box.addView(label("Base URL（只填到 /v1，不要带 /chat/completions）"))
-        box.addView(baseUrl)
-        box.addView(label("API Key"))
-        box.addView(apiKey)
-        box.addView(label("模型"))
-        box.addView(model)
-        box.addView(
-            testBtn,
+            },
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = dp(14) }
+            ).apply { topMargin = dp(16) }
         )
         box.addView(testResult)
         box.addView(loopBox)
 
-        AlertDialog.Builder(this)
+        val dialog = AlertDialog.Builder(this)
             .setTitle("设置")
             .setView(ScrollView(this).apply { addView(box) })
             .setPositiveButton("保存") { _, _ ->
                 prefs.edit()
-                    .putString("baseUrl", baseUrl.text.toString().trim().ifBlank { "https://apihub.agnes-ai.com/v1" })
+                    .putString(
+                        "baseUrl",
+                        baseUrl.text.toString().trim()
+                            .ifBlank { "https://apihub.agnes-ai.com/v1" }
+                    )
                     .putString("apiKey", apiKey.text.toString().trim())
-                    .putString("model", model.text.toString().trim().ifBlank { "agnes-2.5-flash" })
+                    .putString(
+                        "model",
+                        model.text.toString().trim().ifBlank { "agnes-2.5-flash" }
+                    )
                     .putBoolean("loop", loopBox.isChecked)
                     .apply()
                 Toast.makeText(this, "已保存", Toast.LENGTH_SHORT).show()
             }
             .setNegativeButton("取消", null)
-            .show()
+            .create()
+        dialog.show()
+        Ui.roundDialog(dialog, this)
     }
 
-    private fun label(text: String): TextView = TextView(this).apply {
-        this.text = text
-        setTextColor(cDim)
-        textSize = 12f
-        setPadding(0, dp(12), 0, 0)
-    }
+    private fun fieldLabel(s: String): TextView =
+        Ui.text(this, s, 11f, Ui.MUTED, true).apply {
+            letterSpacing = 0.1f
+            setPadding(0, dp(16), 0, dp(7))
+        }
 
-    private fun field(hintText: String, value: String): EditText = EditText(this).apply {
-        hint = hintText
-        setText(value)
-        setTextColor(cFg)
-        setHintTextColor(cDim)
-        inputType = InputType.TYPE_CLASS_TEXT
-    }
+    private fun inputField(hintText: String, value: String): EditText =
+        EditText(this).apply {
+            hint = hintText
+            setText(value)
+            setTextColor(Ui.FG)
+            setHintTextColor(Ui.MUTED)
+            textSize = 15f
+            inputType = InputType.TYPE_CLASS_TEXT
+            includeFontPadding = false
+            setPadding(dp(14), dp(13), dp(14), dp(13))
+            background = Ui.shape(this@MainActivity, 14, Ui.SURFACE_2, 1, Ui.STROKE)
+        }
 
-    // ---------- 语音输入 & 跟读 ----------
+    // ---------- 语音输入 ----------
 
     /** 调系统语音输入界面。不用自己申请麦克风权限，识别工作由系统界面完成。 */
     private fun startVoiceInput() {
@@ -559,189 +639,5 @@ class MainActivity : AppCompatActivity() {
         } catch (e: ActivityNotFoundException) {
             Toast.makeText(this, "这台手机没有语音识别服务，手打一下吧", Toast.LENGTH_LONG).show()
         }
-    }
-
-    private fun openDetail(p: Phrase) {
-        val box = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(8), dp(20), dp(12))
-        }
-
-        box.addView(TextView(this).apply {
-            text = p.phrase
-            setTextColor(cFg)
-            textSize = 20f
-        })
-        if (p.meaning.isNotBlank()) {
-            box.addView(TextView(this).apply {
-                text = p.meaning
-                setTextColor(cDim)
-                textSize = 14f
-                setPadding(0, dp(4), 0, 0)
-            })
-        }
-
-        if (p.examples.isNotEmpty()) {
-            box.addView(sectionTitle("例句"))
-            for (s in p.examples) box.addView(lineView("· $s"))
-        }
-        if (p.dialogue.isNotEmpty()) {
-            box.addView(sectionTitle("情景对话"))
-            for (l in p.dialogue) box.addView(lineView("${l.speaker}: ${l.text}"))
-        }
-
-        box.addView(sectionTitle("跟读对比"))
-        val result = TextView(this).apply {
-            text = "点「开始跟读」，说完停一下\n红字加删除线＝漏读，黄字＝多读"
-            setTextColor(cDim)
-            textSize = 15f
-            setPadding(0, dp(4), 0, dp(10))
-        }
-        box.addView(result)
-
-        val actions = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        actions.addView(pill("🔊 朗读", cCard).apply {
-            setOnClickListener { speak(p.phrase) }
-        })
-        actions.addView(
-            pill("🎤 开始跟读", cAccent).apply {
-                setOnClickListener { startShadow(p, result) }
-            },
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { leftMargin = dp(8) }
-        )
-        box.addView(actions)
-
-        AlertDialog.Builder(this)
-            .setTitle("短语详情")
-            .setView(ScrollView(this).apply { addView(box) })
-            .setNegativeButton("关闭", null)
-            .show()
-    }
-
-    private fun sectionTitle(t: String): TextView = TextView(this).apply {
-        text = t
-        setTextColor(cAccent)
-        textSize = 12f
-        setPadding(0, dp(14), 0, dp(4))
-    }
-
-    private fun lineView(t: String): TextView = TextView(this).apply {
-        text = t
-        setTextColor(cFg)
-        textSize = 14f
-        setPadding(0, dp(3), 0, 0)
-    }
-
-    /** 在 App 内录音识别，需要 RECORD_AUDIO 权限。 */
-    private fun startShadow(p: Phrase, result: TextView) {
-        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) !=
-            PackageManager.PERMISSION_GRANTED
-        ) {
-            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 2)
-            result.text = "先允许录音权限，然后再点一次「开始跟读」"
-            return
-        }
-        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
-            result.text = "这台手机没有可用的语音识别服务"
-            return
-        }
-
-        shadow?.destroy()
-        val recognizer = SpeechRecognizer.createSpeechRecognizer(this)
-        shadow = recognizer
-        recognizer.setRecognitionListener(object : RecognitionListener {
-            override fun onReadyForSpeech(params: Bundle?) {
-                result.text = "在听……说完停一下"
-            }
-
-            override fun onBeginningOfSpeech() {}
-
-            override fun onRmsChanged(rmsdB: Float) {}
-
-            override fun onBufferReceived(buffer: ByteArray?) {}
-
-            override fun onEndOfSpeech() {
-                result.text = "识别中……"
-            }
-
-            override fun onError(error: Int) {
-                result.text = "没听清（错误码 $error），再试一次"
-                recognizer.destroy()
-                if (shadow === recognizer) shadow = null
-            }
-
-            override fun onResults(results: Bundle?) {
-                val heard = results
-                    ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                    ?.firstOrNull()
-                    .orEmpty()
-                result.text = if (heard.isBlank()) {
-                    "这次没听到内容，再试一次"
-                } else {
-                    renderDiff(p.phrase, heard)
-                }
-                recognizer.destroy()
-                if (shadow === recognizer) shadow = null
-            }
-
-            override fun onPartialResults(partialResults: Bundle?) {}
-
-            override fun onEvent(eventType: Int, params: Bundle?) {}
-        })
-
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(
-                RecognizerIntent.EXTRA_LANGUAGE_MODEL,
-                RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
-            )
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-US")
-            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
-            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-        }
-        recognizer.startListening(intent)
-    }
-
-    private fun renderDiff(ref: String, heard: String): CharSequence {
-        val tokens = Diff.align(ref, heard)
-        val sb = SpannableStringBuilder()
-        for (t in tokens) {
-            val start = sb.length
-            sb.append(t.text).append(' ')
-            val end = start + t.text.length
-            val flag = Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
-            when (t.status) {
-                Diff.MISSING -> {
-                    sb.setSpan(ForegroundColorSpan(Color.parseColor("#FF6B6B")), start, end, flag)
-                    sb.setSpan(StrikethroughSpan(), start, end, flag)
-                }
-
-                Diff.EXTRA -> sb.setSpan(
-                    ForegroundColorSpan(Color.parseColor("#FFC857")), start, end, flag
-                )
-
-                else -> sb.setSpan(ForegroundColorSpan(cFg), start, end, flag)
-            }
-        }
-        sb.append("\n\n命中率 ${Diff.accuracy(tokens)}%")
-        return sb
-    }
-
-    private fun startReview() {        val intent = Intent(this, ReviewService::class.java).setAction(ReviewService.ACTION_START)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(intent)
-        } else {
-            startService(intent)
-        }
-        Toast.makeText(this, "开始复习，锁屏也会继续", Toast.LENGTH_SHORT).show()
-    }
-
-    private fun sendService(action: String) {
-        startService(Intent(this, ReviewService::class.java).setAction(action))
     }
 }
