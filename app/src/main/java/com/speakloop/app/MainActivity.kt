@@ -469,8 +469,9 @@ class MainActivity : AppCompatActivity() {
                 testResult.setTextColor(cDim)
                 testResult.text = "测试中……（推理模型可能要几秒）"
                 thread {
+                    // Kotlin 不允许同一个 val 在 try 和 catch 里各赋一次，这里必须用 var
                     var ok = true
-                    val msg: String
+                    var msg = ""
                     try {
                         val r = Llm.test(bu, k.trim(), m.trim())
                         msg = buildString {
