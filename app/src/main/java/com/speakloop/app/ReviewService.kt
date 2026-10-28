@@ -482,28 +482,30 @@ class ReviewService : Service(), TextToSpeech.OnInitListener {
         updateSessionState()
     }
 
-    private fun skipNext() {
-        if (!running) return
-        handler.removeCallbacks(tick)
-        handler.removeCallbacks(gapDone)
-        inGap = false
-        tts?.stop()
-        advance()
-    }
-
     /**
-     * 退回上一句。已经在第一句就原地重读，不绕回队尾 —— 复习是线性流程，
-     * 往回绕到结尾会让人瞬间失去方位感。
+     * 按「条」跳：整条短语一起跳过或退回，不是跳到下一句例句。
+     * 骑车时按一下是想换个词，不该连按七八下把例句和对话都划过去。
+     *
+     * 目标落在该短语的**第一个** Step 上，所以会从慢速版重新开始，保持一条短语的完整节奏。
      */
-    private fun skipPrev() {
+    private fun skipPhrase(toNext: Boolean) {
         if (!running) return
+        val cur = steps.getOrNull(index)?.phraseIndex ?: return
+        val want = if (toNext) cur + 1 else (cur - 1).coerceAtLeast(0)
+        val target = steps.indexOfFirst { it.phraseIndex == want }
+        // 已经是最后一条再点「下一条」就原地不动：宁可没反应，也不要误触直接结束整轮
+        if (target < 0) return
         handler.removeCallbacks(tick)
         handler.removeCallbacks(gapDone)
         inGap = false
         tts?.stop()
-        index = (index - 1).coerceAtLeast(0)
+        index = target
         playCurrent()
     }
+
+    private fun skipNext() = skipPhrase(true)
+
+    private fun skipPrev() = skipPhrase(false)
 
     private fun finish() {
         running = false
@@ -754,7 +756,7 @@ class ReviewService : Service(), TextToSpeech.OnInitListener {
             // 图标不能传 0：华为这类 ROM 会把图标为 0 的 action 当无效项整条丢掉，
             // 表现就是「通知栏里暂停、下一句都没了」。用系统自带媒体图标最稳。
             .addAction(
-                android.R.drawable.ic_media_previous, "上一句", prevPending
+                android.R.drawable.ic_media_previous, "上一条", prevPending
             )
             .addAction(
                 if (paused) android.R.drawable.ic_media_play
@@ -763,7 +765,7 @@ class ReviewService : Service(), TextToSpeech.OnInitListener {
                 togglePending
             )
             .addAction(
-                android.R.drawable.ic_media_next, "下一句", nextPending
+                android.R.drawable.ic_media_next, "下一条", nextPending
             )
             .addAction(
                 android.R.drawable.ic_menu_close_clear_cancel, "停止", stopPending

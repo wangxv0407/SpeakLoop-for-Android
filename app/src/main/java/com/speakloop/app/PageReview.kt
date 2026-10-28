@@ -232,10 +232,10 @@ class PageReview(private val host: MainActivity) : ReviewBus.Listener {
             setOnClickListener { onClick() }
         }
 
-        prevBtn = sideBtn("上一句", Ui.DIM) {
+        prevBtn = sideBtn("上一条", Ui.DIM) {
             ReviewService.command(host, ReviewService.ACTION_PREV)
         }
-        nextBtn = sideBtn("下一句", Ui.DIM) {
+        nextBtn = sideBtn("下一条", Ui.DIM) {
             ReviewService.command(host, ReviewService.ACTION_NEXT)
         }
 
@@ -467,10 +467,11 @@ class PageReview(private val host: MainActivity) : ReviewBus.Listener {
         if (::prevBtn.isInitialized) prevBtn.visibility = side
         if (::nextBtn.isInitialized) nextBtn.visibility = side
 
-        hint.text = if (s.running) {
-            "第 ${s.stepIndex} / ${s.stepTotal} 句 · 耳机线控可暂停"
-        } else {
-            "点开始，锁屏也会继续读"
+        // 按钮叫「上一条 / 下一条」，跳的也是整条，所以这里给的是本条内的句子进度
+        hint.text = when {
+            !s.running -> "点开始，锁屏也会继续读"
+            s.lines.size > 1 -> "本条第 ${s.cursor + 1} / ${s.lines.size} 句"
+            else -> "上一条 / 下一条按整条短语跳"
         }
     }
 
