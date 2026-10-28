@@ -846,7 +846,9 @@ class DetailActivity : AppCompatActivity() {
      * 华为等机型上 `isRecognitionAvailable()` 会返回 true，但 startListening 之后
      * 一个回调都不来（既没有 onReadyForSpeech，也没有 onError）。
      * 之前的版本就卡死在这里：按钮点了、界面一点变化都没有。
-     * 这里加一个看门狗，等不到任何回应就判定不可用，直接换成录音对比。
+     *
+     * 这里加一个看门狗。阈值给 3.5 秒而不是 2 秒——有的机型首次绑服务要一两秒，
+     * 太短会把本来能用的识别也打断。
      */
     private fun armVoiceWatchdog() {
         cancelVoiceWatchdog()
@@ -855,14 +857,14 @@ class DetailActivity : AppCompatActivity() {
             recognizer?.destroy()
             recognizer = null
             showStatus(
-                "系统语音识别 2 秒没有任何响应（华为等机型常见），已改成「录音对比」：\n" +
+                "系统语音识别一直没有响应（华为等机型常见），已改成「录音对比」：\n" +
                     "读完点停止，再点下面的「听录音」和原声对比。",
                 Ui.WARN
             )
             beginRecordFallback()
         }
         voiceWatchdog = r
-        handler.postDelayed(r, 2200)
+        handler.postDelayed(r, 3500)
     }
 
     private fun cancelVoiceWatchdog() {
@@ -875,7 +877,7 @@ class DetailActivity : AppCompatActivity() {
         recognizer?.destroy()
 
         voiceResponsive = false
-        showStatus("正在启动语音识别……（2 秒没反应会自动改成录音对比）", Ui.DIM)
+        showStatus("正在启动语音识别……（3 秒没反应会自动改成录音对比）", Ui.DIM)
         armVoiceWatchdog()
 
         val r = SpeechRecognizer.createSpeechRecognizer(this)
@@ -906,14 +908,24 @@ class DetailActivity : AppCompatActivity() {
             override fun onError(error: Int) {
                 voiceResponsive = true
                 cancelVoiceWatchdog()
-                resultView.setTextColor(Ui.WARN)
-                resultView.text = buildString {
-                    append("应用内识别失败（错误码 ").append(error).append("）\n")
-                    append(errorHint(error))
-                    append("\n再点一次「跟读」重试，或点下面「录一遍」自己对比。")
-                }
+                // 客户端异常 / 录音出错说明这套识别在这台机器上根本跑不起来，别让用户反复点
+                val fatal = error == SpeechRecognizer.ERROR_CLIENT ||
+                    error == SpeechRecognizer.ERROR_AUDIO
+                showStatus(
+                    buildString {
+                        append("应用内识别失败（错误码 ").append(error).append("）\n")
+                        append(errorHint(error))
+                        if (fatal) {
+                            append("\n已改成「录音对比」，读完点停止就能回放。")
+                        } else {
+                            append("\n再点一次「跟读」重试，或点下面「录一遍」自己对比。")
+                        }
+                    },
+                    Ui.WARN
+                )
                 r.destroy()
                 if (recognizer === r) recognizer = null
+                if (fatal) beginRecordFallback()
             }
 
             override fun onResults(results: Bundle?) {
