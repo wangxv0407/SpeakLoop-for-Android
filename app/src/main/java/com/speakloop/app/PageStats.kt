@@ -73,9 +73,9 @@ class PageStats(private val host: MainActivity) {
 
         body.removeAllViews()
         body.addView(
-            Ui.text(host, "近 $heatDays 天", 12f, Ui.DIM)
+            Ui.text(host, "近 $heatDays 天", Ui.T.SUB, Ui.DIM)
         )
-        body.addView(Ui.text(host, "统计", 25f, Ui.FG, true).apply { letterSpacing = -0.01f })
+        body.addView(Ui.text(host, "统计", Ui.T.H1, Ui.FG, true).apply { letterSpacing = -0.01f })
 
         body.addView(
             buildSummary(practicedDays, elapsed, monthCount, streak, totalTimes, totalPhrases),
@@ -118,12 +118,12 @@ class PageStats(private val host: MainActivity) {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), 0, 0, 0)
         }
-        right.addView(Ui.text(host, "本月已练", 11f, Ui.DIM))
+        right.addView(Ui.text(host, "本月已练", Ui.T.CAP, Ui.DIM))
         right.addView(
             Ui.text(host, "$monthCount 条", 20f, Ui.FG, true).apply { setPadding(0, dp(2), 0, 0) }
         )
         right.addView(
-            Ui.text(host, "$elapsed 天里打卡 $practicedDays 天", 11f, Ui.MUTED)
+            Ui.text(host, "$elapsed 天里打卡 $practicedDays 天", Ui.T.CAP, Ui.MUTED)
                 .apply { setPadding(0, dp(3), 0, 0) }
         )
         row.addView(right, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
@@ -145,7 +145,7 @@ class PageStats(private val host: MainActivity) {
 
         if (totalPhrases == 0) {
             card.addView(
-                Ui.text(host, "短语库还是空的，先去加一条", 11f, Ui.MUTED)
+                Ui.text(host, "短语库还是空的，先去加一条", Ui.T.CAP, Ui.MUTED)
                     .apply { setPadding(0, dp(10), 0, 0) }
             )
         }
@@ -158,8 +158,8 @@ class PageStats(private val host: MainActivity) {
 
     private fun cell(k: String, v: String): View {
         val col = LinearLayout(host).apply { orientation = LinearLayout.VERTICAL }
-        col.addView(Ui.text(host, k, 11f, Ui.MUTED))
-        col.addView(Ui.text(host, v, 14f, Ui.FG, true).apply { setPadding(0, dp(2), 0, 0) })
+        col.addView(Ui.text(host, k, Ui.T.CAP, Ui.MUTED))
+        col.addView(Ui.text(host, v, Ui.T.BODY, Ui.FG, true).apply { setPadding(0, dp(2), 0, 0) })
         return col
     }
 
@@ -171,10 +171,10 @@ class PageStats(private val host: MainActivity) {
             gravity = Gravity.CENTER_VERTICAL
         }
         head.addView(
-            Ui.text(host, "练习记录", 13f, Ui.FG, true),
+            Ui.text(host, "练习记录", Ui.T.SUB, Ui.FG, true),
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         )
-        head.addView(Ui.text(host, "颜色越深练得越多", 10f, Ui.MUTED))
+        head.addView(Ui.text(host, "颜色越深练得越多", Ui.T.CAP, Ui.MUTED))
         card.addView(head)
 
         val data = HashMap<LocalDate, Int>()
@@ -196,7 +196,7 @@ class PageStats(private val host: MainActivity) {
             gravity = Gravity.END or Gravity.CENTER_VERTICAL
         }
         legend.addView(
-            Ui.text(host, "少", 9f, Ui.MUTED).apply {
+            Ui.text(host, "少", Ui.T.CAP, Ui.MUTED).apply {
                 setPadding(0, 0, dp(5), 0)
             }
         )
@@ -209,7 +209,7 @@ class PageStats(private val host: MainActivity) {
                 }
             })
         }
-        legend.addView(Ui.text(host, "多", 9f, Ui.MUTED))
+        legend.addView(Ui.text(host, "多", Ui.T.CAP, Ui.MUTED))
         card.addView(legend, W.margin(host, top = 10))
         return card
     }
@@ -232,15 +232,15 @@ class PageStats(private val host: MainActivity) {
             gravity = Gravity.CENTER_VERTICAL
         }
         head.addView(
-            Ui.text(host, "练得最多", 13f, Ui.FG, true),
+            Ui.text(host, "练得最多", Ui.T.SUB, Ui.FG, true),
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         )
-        head.addView(Ui.text(host, "本月", 11f, Ui.MUTED))
+        head.addView(Ui.text(host, "本月", Ui.T.CAP, Ui.MUTED))
         col.addView(head)
 
         if (top.isEmpty()) {
             col.addView(
-                Ui.text(host, "这个月还没练过，去「复习」走一轮", 11f, Ui.MUTED)
+                Ui.text(host, "这个月还没练过，去「复习」走一轮", Ui.T.CAP, Ui.MUTED)
                     .apply { setPadding(0, dp(10), 0, 0) }
             )
             return col
@@ -255,19 +255,19 @@ class PageStats(private val host: MainActivity) {
                 setPadding(dp(15), dp(11), dp(15), dp(11))
             }
             row.addView(
-                Ui.text(host, "${i + 1}", 12f, Ui.MUTED)
+                Ui.text(host, "${i + 1}", Ui.T.CAP, Ui.MUTED)
                     .apply { gravity = Gravity.CENTER },
                 LinearLayout.LayoutParams(dp(14), ViewGroup.LayoutParams.WRAP_CONTENT)
             )
             row.addView(
-                Ui.text(host, text, 13f, Ui.FG).apply {
+                Ui.text(host, text, 15f, Ui.FG).apply {
                     setPadding(dp(8), 0, 0, 0)
                     maxLines = 1
                     ellipsize = android.text.TextUtils.TruncateAt.END
                 },
                 LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             )
-            row.addView(Ui.text(host, "$n 次", 11f, Ui.DIM))
+            row.addView(Ui.text(host, "$n 次", Ui.T.CAP, Ui.DIM))
             card.addView(row)
         }
         col.addView(card, W.margin(host, top = 8))

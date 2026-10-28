@@ -85,7 +85,7 @@ class PagePhrases(private val host: MainActivity) {
             )
             renderGroups(phrases)
             body.addView(
-                Ui.text(host, "点开可跟读 · 长按可删除", 11f, Ui.MUTED).apply {
+                Ui.text(host, "点开可跟读 · 长按可删除", Ui.T.CAP, Ui.MUTED).apply {
                     gravity = Gravity.CENTER
                 },
                 W.margin(host, top = 14)
@@ -104,14 +104,14 @@ class PagePhrases(private val host: MainActivity) {
     private fun buildHeader(): View {
         val col = LinearLayout(host).apply { orientation = LinearLayout.VERTICAL }
         col.addView(
-            Ui.text(host, Fmt.textWithWeek(Fmt.today()), 12f, Ui.DIM)
+            Ui.text(host, Fmt.textWithWeek(Fmt.today()), Ui.T.SUB, Ui.DIM)
         )
         val row = LinearLayout(host).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
         row.addView(
-            Ui.text(host, "短语库", 25f, Ui.FG, true).apply { letterSpacing = -0.01f },
+            Ui.text(host, "短语库", Ui.T.H1, Ui.FG, true).apply { letterSpacing = -0.01f },
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         )
         row.addView(addButton())
@@ -142,10 +142,10 @@ class PagePhrases(private val host: MainActivity) {
             gravity = Gravity.CENTER_VERTICAL
         }
         top.addView(
-            Ui.text(host, "今日已练", 12f, Ui.DIM),
+            Ui.text(host, "今日已练", Ui.T.SUB, Ui.DIM),
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         )
-        top.addView(Ui.text(host, "目标 $goal 条", 11f, Ui.MUTED))
+        top.addView(Ui.text(host, "目标 $goal 条", Ui.T.CAP, Ui.MUTED))
         card.addView(top)
 
         val middle = LinearLayout(host).apply {
@@ -177,7 +177,7 @@ class PagePhrases(private val host: MainActivity) {
             )
         )
         tip.addView(
-            Ui.text(host, if (left > 0) "就达成今天" else "干得不错", 11f, Ui.MUTED)
+            Ui.text(host, if (left > 0) "就达成今天" else "干得不错", Ui.T.CAP, Ui.MUTED)
                 .apply { setPadding(0, dp(2), 0, 0) }
         )
         middle.addView(tip)
@@ -211,9 +211,9 @@ class PagePhrases(private val host: MainActivity) {
 
     private fun statCell(k: String, v: String): View {
         val col = LinearLayout(host).apply { orientation = LinearLayout.VERTICAL }
-        col.addView(Ui.text(host, k, 11f, Ui.MUTED))
+        col.addView(Ui.text(host, k, Ui.T.CAP, Ui.MUTED))
         col.addView(
-            Ui.text(host, v, 14f, Ui.FG, true).apply { setPadding(0, dp(2), 0, 0) }
+            Ui.text(host, v, Ui.T.BODY, Ui.FG, true).apply { setPadding(0, dp(2), 0, 0) }
         )
         return col
     }
@@ -229,7 +229,7 @@ class PagePhrases(private val host: MainActivity) {
         sb.setSpan(
             ForegroundColorSpan(Ui.MUTED), start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
         )
-        return Ui.text(host, sb, 30f, Ui.FG, true)
+        return Ui.text(host, sb, 34f, Ui.FG, true)
     }
 
     /** 连续记录天数按「加短语的日期」算，和统计页按练习算的口径不同。 */
@@ -254,10 +254,10 @@ class PagePhrases(private val host: MainActivity) {
             gravity = Gravity.CENTER_VERTICAL
         }
         row.addView(
-            Ui.text(host, "短语库", 13f, Ui.FG, true),
+            Ui.text(host, "短语库", Ui.T.SUB, Ui.FG, true),
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         )
-        row.addView(Ui.text(host, "$total 条", 11f, Ui.MUTED))
+        row.addView(Ui.text(host, "$total 条", Ui.T.CAP, Ui.MUTED))
         return row
     }
 
@@ -288,12 +288,12 @@ class PagePhrases(private val host: MainActivity) {
                 refresh()
             }
         }
-        row.addView(Ui.text(host, b.title, 13f, Ui.FG, true))
+        row.addView(Ui.text(host, b.title, Ui.T.SUB, Ui.FG, true))
         row.addView(
-            Ui.text(host, b.subtitle, 11f, Ui.MUTED).apply { setPadding(dp(8), 0, 0, 0) }
+            Ui.text(host, b.subtitle, Ui.T.CAP, Ui.MUTED).apply { setPadding(dp(8), 0, 0, 0) }
         )
         row.addView(View(host), LinearLayout.LayoutParams(0, 1, 1f))
-        row.addView(Ui.text(host, "${b.items.size} 条", 11f, Ui.MUTED))
+        row.addView(Ui.text(host, "${b.items.size} 条", Ui.T.CAP, Ui.MUTED))
         row.addView(
             Ui.icon(
                 host,
@@ -325,10 +325,10 @@ class PagePhrases(private val host: MainActivity) {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(11), 0, dp(8), 0)
         }
-        col.addView(Ui.text(host, p.phrase, 14f, Ui.FG, true))
+        col.addView(Ui.text(host, p.phrase, Ui.T.BODY, Ui.FG, true))
         if (p.meaning.isNotBlank()) {
             col.addView(
-                Ui.text(host, p.meaning, 11f, Ui.DIM).apply {
+                Ui.text(host, p.meaning, Ui.T.SUB, Ui.DIM).apply {
                     setPadding(0, dp(2), 0, 0)
                     maxLines = 1
                     ellipsize = android.text.TextUtils.TruncateAt.END
@@ -372,10 +372,10 @@ class PagePhrases(private val host: MainActivity) {
             gravity = Gravity.CENTER_HORIZONTAL
         }
         col.addView(
-            Ui.text(host, "还没有短语", 16f, Ui.FG, true).apply { gravity = Gravity.CENTER }
+            Ui.text(host, "还没有短语", Ui.T.TITLE, Ui.FG, true).apply { gravity = Gravity.CENTER }
         )
         col.addView(
-            Ui.text(host, "点右上角 ＋ 加一条\nAI 会顺手补上释义、例句和情景对话", 12f, Ui.MUTED)
+            Ui.text(host, "点右上角 ＋ 加一条\nAI 会顺手补上释义、例句和情景对话", Ui.T.SUB, Ui.MUTED)
                 .apply {
                     gravity = Gravity.CENTER
                     setPadding(0, dp(8), 0, 0)

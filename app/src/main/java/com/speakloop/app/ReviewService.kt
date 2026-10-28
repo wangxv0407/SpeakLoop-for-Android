@@ -21,6 +21,7 @@ import android.os.PowerManager
 import android.os.SystemClock
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import android.widget.Toast
 import java.time.LocalDate
 import java.time.ZoneId
 import java.util.Locale
@@ -750,26 +751,21 @@ class ReviewService : Service(), TextToSpeech.OnInitListener {
             .setContentTitle(title)
             .setContentText(sub)
             .setSubText(if (paused) "已暂停" else null)
-            .setSmallIcon(android.R.drawable.ic_media_play)
+            .setSmallIcon(R.drawable.ic_play)
+            // 让通知的强调色跟着 App 走，不再用系统默认的灰蓝
+            .setColor(Ui.ACCENT)
             .setOngoing(running)
             .setContentIntent(openPending)
             // 图标不能传 0：华为这类 ROM 会把图标为 0 的 action 当无效项整条丢掉，
-            // 表现就是「通知栏里暂停、下一句都没了」。用系统自带媒体图标最稳。
+            // 表现就是「通知栏里暂停、下一句都没了」。统一用项目自己的单色矢量图。
+            .addAction(R.drawable.ic_prev, "上一条", prevPending)
             .addAction(
-                android.R.drawable.ic_media_previous, "上一条", prevPending
-            )
-            .addAction(
-                if (paused) android.R.drawable.ic_media_play
-                else android.R.drawable.ic_media_pause,
+                if (paused) R.drawable.ic_play else R.drawable.ic_pause,
                 if (paused) "继续" else "暂停",
                 togglePending
             )
-            .addAction(
-                android.R.drawable.ic_media_next, "下一条", nextPending
-            )
-            .addAction(
-                android.R.drawable.ic_menu_close_clear_cancel, "停止", stopPending
-            )
+            .addAction(R.drawable.ic_next, "下一条", nextPending)
+            .addAction(R.drawable.ic_stop, "停止", stopPending)
 
         // MediaStyle + sessionToken 是蓝牙耳机能控制的前提：只做普通通知时，
         // 系统媒体面板和 AVRCP 不知道有这个播放会话，耳机上按暂停自然没反应。
@@ -802,9 +798,14 @@ class ReviewService : Service(), TextToSpeech.OnInitListener {
         updateSessionState()
     }
 
+    /**
+     * 服务内部的提示（「这一天没有可练的短语」这类）。
+     *
+     * 以前这里发一条 ID+1 的通知，但从来没有人撤它 —— 结果这条提示会永久卡在通知栏，
+     * 而且里面的「暂停 / 下一条」按钮对应的服务早就停了，点了毫无反应。
+     * 改成 Toast：一闪而过，不留垃圾。
+     */
     private fun notifyState(text: String) {
-        val manager = getSystemService(NotificationManager::class.java) ?: return
-        createChannel()
-        manager.notify(NOTIF_ID + 1, buildNotification(text))
+        Toast.makeText(this, text, Toast.LENGTH_SHORT).show()
     }
 }

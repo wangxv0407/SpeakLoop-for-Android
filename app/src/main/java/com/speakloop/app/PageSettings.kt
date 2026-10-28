@@ -31,6 +31,13 @@ class PageSettings(private val host: MainActivity) {
 
     private fun dp(v: Int) = host.dp(v)
 
+    /** App 版本。拿不到就返回空串，标题只显示 "SpeakLoop"，不编一个假版本号。 */
+    private fun appVersion(): String = try {
+        host.packageManager.getPackageInfo(host.packageName, 0).versionName.orEmpty()
+    } catch (e: Exception) {
+        ""
+    }
+
     init {
         val scroll = ScrollView(host).apply {
             isVerticalScrollBarEnabled = false
@@ -49,8 +56,11 @@ class PageSettings(private val host: MainActivity) {
         // 重建页面会丢输入框里的内容，所以先把已经敲进去的 AI 配置存下来
         if (::baseUrl.isInitialized) saveAiQuietly()
         body.removeAllViews()
-        body.addView(Ui.text(host, "SpeakLoop 1.6", 12f, Ui.DIM))
-        body.addView(Ui.text(host, "设置", 25f, Ui.FG, true).apply { letterSpacing = -0.01f })
+        // 版本号向系统要，别再手写 —— 之前写死成 1.6，实际早到 1.9 了
+        body.addView(
+            Ui.text(host, "SpeakLoop ${appVersion()}".trim(), Ui.T.CAP, Ui.DIM)
+        )
+        body.addView(Ui.text(host, "设置", Ui.T.H1, Ui.FG, true).apply { letterSpacing = -0.01f })
 
         body.addView(section("复习"))
         body.addView(reviewCard(), W.margin(host, top = 7))
@@ -77,7 +87,7 @@ class PageSettings(private val host: MainActivity) {
     }
 
     private fun section(t: String): TextView =
-        Ui.text(host, t, 11f, Ui.MUTED, true).apply {
+        Ui.text(host, t, Ui.T.CAP, Ui.MUTED, true).apply {
             setPadding(dp(4), dp(14), 0, 0)
             letterSpacing = 0.06f
         }
@@ -90,10 +100,10 @@ class PageSettings(private val host: MainActivity) {
             gravity = Gravity.CENTER_VERTICAL
         }
         row.addView(
-            Ui.text(host, k, 13f, Ui.FG),
+            Ui.text(host, k, Ui.T.BODY, Ui.FG),
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         )
-        row.addView(Ui.text(host, v, 12f, Ui.DIM))
+        row.addView(Ui.text(host, v, Ui.T.SUB, Ui.MUTED))
         return row
     }
 
@@ -149,7 +159,7 @@ class PageSettings(private val host: MainActivity) {
             build()
         })
         c.addView(
-            Ui.text(host, "开着的话，以前只听过一遍、后来再没碰过的短语也会被排进来", 10f, Ui.MUTED)
+            Ui.text(host, "开着的话，以前只听过一遍、后来再没碰过的短语也会被排进来", Ui.T.CAP, Ui.MUTED)
                 .apply {
                     setPadding(0, dp(7), 0, 0)
                     setLineSpacing(dp(3).toFloat(), 1f)
@@ -180,7 +190,7 @@ class PageSettings(private val host: MainActivity) {
             build()
         })
         c.addView(
-            Ui.text(host, "关掉留白整轮能快一倍，适合只想听、不想跟读的时候", 10f, Ui.MUTED)
+            Ui.text(host, "关掉留白整轮能快一倍，适合只想听、不想跟读的时候", Ui.T.CAP, Ui.MUTED)
                 .apply { setPadding(0, dp(7), 0, 0) }
         )
 
@@ -250,7 +260,7 @@ class PageSettings(private val host: MainActivity) {
         )
         c.addView(actions)
 
-        testResult = Ui.text(host, "", 11f, Ui.MUTED).apply {
+        testResult = Ui.text(host, "", Ui.T.CAP, Ui.MUTED).apply {
             setPadding(0, dp(11), 0, 0)
             setLineSpacing(dp(4).toFloat(), 1f)
         }

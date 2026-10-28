@@ -43,9 +43,12 @@ class PageReview(private val host: MainActivity) : ReviewBus.Listener {
     private lateinit var playCircle: LinearLayout
     private lateinit var playIcon: ImageView
     private lateinit var playLabel: TextView
-    private lateinit var stopBtn: TextView
-    private lateinit var prevBtn: TextView
-    private lateinit var nextBtn: TextView
+
+    /** 主按钮当前是不是「播放中」的绿色皮肤，只在状态翻转时重建背景，避免每 100ms 抖一次 */
+    private var playSkin = false
+    private lateinit var stopBtn: ImageView
+    private lateinit var prevBtn: ImageView
+    private lateinit var nextBtn: ImageView
     private lateinit var hint: TextView
 
     private lateinit var dayChip: TextView
@@ -82,13 +85,13 @@ class PageReview(private val host: MainActivity) : ReviewBus.Listener {
             ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
         ).apply { topMargin = dp(10) })
 
-        stateLine = Ui.text(host, "", 12f, Ui.MUTED).apply {
+        stateLine = Ui.text(host, "", Ui.T.SUB, Ui.MUTED).apply {
             gravity = Gravity.CENTER
             setPadding(0, dp(8), 0, 0)
         }
         root.addView(stateLine)
         root.addView(buildPlayButton(), W.margin(host, top = 10))
-        hint = Ui.text(host, "点开始，锁屏也会继续读", 10f, Ui.MUTED).apply {
+        hint = Ui.text(host, "点开始，锁屏也会继续读", Ui.T.CAP, Ui.MUTED).apply {
             gravity = Gravity.CENTER
         }
         root.addView(hint, W.margin(host, top = 9))
@@ -108,17 +111,26 @@ class PageReview(private val host: MainActivity) : ReviewBus.Listener {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        counter = Ui.text(host, "准备就绪", 12f, Ui.DIM)
-        scope = Ui.text(host, "", 11f, Ui.MUTED)
+        counter = Ui.text(host, "准备就绪", Ui.T.SUB, Ui.DIM)
+        scope = Ui.text(host, "", Ui.T.CAP, Ui.MUTED)
 
         val left = LinearLayout(host).apply {
-            orientation = LinearLayout.HORIZONTAL
+            orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_VERTICAL
         }
         left.addView(counter)
-        left.addView(scope, W.wrap(host, left = 8))
+        left.addView(scope, W.margin(host, top = 2))
         row.addView(left, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         row.addView(buildDayChip())
+        // 结束收进顶栏：底部留给「上一条 / 播放 / 下一条」三个主操作，
+        // 四个平级按钮挤在一起时，骑车的手最容易误触到「结束」
+        stopBtn = Ui.iconButton(host, R.drawable.ic_stop, Ui.BAD, 40) {
+            ReviewService.command(host, ReviewService.ACTION_STOP)
+        }.apply {
+            visibility = View.GONE
+            layoutParams = LinearLayout.LayoutParams(dp(40), dp(40)).apply { marginStart = dp(8) }
+        }
+        row.addView(stopBtn)
         col.addView(row)
 
         val bar = LinearLayout(host).apply {
@@ -127,7 +139,8 @@ class PageReview(private val host: MainActivity) : ReviewBus.Listener {
             background = Ui.shape(host, 2, Ui.SURFACE_2)
         }
         fill = View(host).apply {
-            setBackgroundColor(Ui.ACCENT)
+            // 播放进度用绿色，和「正在读哪一行」保持同一套语义
+            setBackgroundColor(Ui.GOOD)
             layoutParams = LinearLayout.LayoutParams(0, dp(4), 0f)
         }
         track = View(host).apply {
@@ -140,7 +153,7 @@ class PageReview(private val host: MainActivity) : ReviewBus.Listener {
     }
 
     private fun buildDayChip(): TextView {
-        dayChip = Ui.text(host, "", 11f, Ui.FG, true)
+        dayChip = Ui.text(host, "", Ui.T.CAP, Ui.FG, true)
         dayChip.setPadding(dp(11), dp(6), dp(11), dp(6))
         dayChip.background = Ui.ripple(host, 11, Ui.SURFACE, 1, Ui.STROKE)
         dayChip.isClickable = true
@@ -151,14 +164,14 @@ class PageReview(private val host: MainActivity) : ReviewBus.Listener {
     private fun buildCard(): View {
         val card = W.card(host, 22).apply { setPadding(dp(18), dp(16), dp(18), dp(16)) }
 
-        card.addView(Ui.text(host, "短语", 10f, Ui.ACCENT, true).apply { letterSpacing = 0.02f })
+        card.addView(Ui.text(host, "短语", Ui.T.CAP, Ui.ACCENT, true).apply { letterSpacing = 0.02f })
         phraseText = Ui.text(host, "还没开始", 24f, Ui.FG, true).apply {
             setPadding(0, dp(6), 0, 0)
             setLineSpacing(dp(3).toFloat(), 1f)
             letterSpacing = -0.01f
         }
         card.addView(phraseText)
-        meaningText = Ui.text(host, "", 13f, Ui.DIM).apply { setPadding(0, dp(5), 0, 0) }
+        meaningText = Ui.text(host, "", Ui.T.SUB, Ui.DIM).apply { setPadding(0, dp(5), 0, 0) }
         card.addView(meaningText)
         return card
     }
@@ -189,7 +202,7 @@ class PageReview(private val host: MainActivity) : ReviewBus.Listener {
             setBackgroundColor(android.graphics.Color.TRANSPARENT)
             layoutParams = LinearLayout.LayoutParams(dp(3), ViewGroup.LayoutParams.MATCH_PARENT)
         }
-        val tag = Ui.text(host, line.tag, 9f, Ui.MUTED, true).apply {
+        val tag = Ui.text(host, line.tag, Ui.T.CAP, Ui.MUTED, true).apply {
             gravity = Gravity.CENTER
             layoutParams = LinearLayout.LayoutParams(dp(32), ViewGroup.LayoutParams.WRAP_CONTENT)
         }
@@ -197,9 +210,9 @@ class PageReview(private val host: MainActivity) : ReviewBus.Listener {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(8), 0, 0, 0)
         }
-        val en = Ui.text(host, line.text, 14f, Ui.FG).apply { setLineSpacing(dp(3).toFloat(), 1f) }
+        val en = Ui.text(host, line.text, 15f, Ui.FG).apply { setLineSpacing(dp(3).toFloat(), 1f) }
         col.addView(en)
-        val cnTv = Ui.text(host, line.cn, 11f, Ui.MUTED).apply {
+        val cnTv = Ui.text(host, line.cn, Ui.T.CAP, Ui.MUTED).apply {
             setPadding(0, dp(3), 0, 0)
             visibility = if (line.cn.isBlank()) View.GONE else View.VISIBLE
         }
@@ -221,28 +234,21 @@ class PageReview(private val host: MainActivity) : ReviewBus.Listener {
             gravity = Gravity.CENTER
         }
 
-        // 播放中才出现的三个小按钮：跳句 + 结束。内边距压到 12dp，
-        // 360dp 宽的屏上也塞得下，不会把中间的暂停键挤成一条缝。
-        fun sideBtn(label: String, color: Int, onClick: () -> Unit) = Ui.text(host, label, 13f, color, true).apply {
-            gravity = Gravity.CENTER
-            setPadding(dp(12), dp(14), dp(12), dp(14))
-            background = Ui.ripple(host, 18, Ui.SURFACE, 1, Ui.STROKE)
-            isClickable = true
-            visibility = View.GONE
-            setOnClickListener { onClick() }
-        }
-
-        prevBtn = sideBtn("上一条", Ui.DIM) {
+        // 跳条做成一枚 56dp 的正圆放在主按钮两侧：骑车戴手套时，圆形比窄文字条好点中，
+        // 三个元素也比四个平级按钮更容易一眼定位「中间那个是播放」
+        prevBtn = Ui.iconButton(host, R.drawable.ic_prev, Ui.FG, 56) {
             ReviewService.command(host, ReviewService.ACTION_PREV)
-        }
-        nextBtn = sideBtn("下一条", Ui.DIM) {
+        }.apply { visibility = View.GONE }
+
+        nextBtn = Ui.iconButton(host, R.drawable.ic_next, Ui.FG, 56) {
             ReviewService.command(host, ReviewService.ACTION_NEXT)
-        }
+        }.apply { visibility = View.GONE }
 
         playCircle = LinearLayout(host).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
-            background = Ui.ripple(host, 18, Ui.SOLID, 0, Ui.STROKE)
+            minimumHeight = dp(56)
+            background = Ui.ripple(host, 28, Ui.SOLID, 0, Ui.STROKE)
             isClickable = true
             setPadding(dp(20), dp(14), dp(20), dp(14))
             setOnClickListener { onPlayClick() }
@@ -252,27 +258,16 @@ class PageReview(private val host: MainActivity) : ReviewBus.Listener {
         playCircle.addView(playIcon)
         playCircle.addView(playLabel, W.wrap(host, left = 8))
 
-        row.addView(prevBtn, sideParams(0))
+        row.addView(prevBtn, LinearLayout.LayoutParams(dp(56), dp(56)))
         row.addView(
             playCircle,
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-                marginStart = dp(8)
+                marginStart = dp(10)
             }
         )
-        row.addView(nextBtn, sideParams(8))
-
-        // 播放中只给「暂停」会让人没法退出来，所以旁边常备一个「结束」
-        stopBtn = sideBtn("结束", Ui.BAD) {
-            ReviewService.command(host, ReviewService.ACTION_STOP)
-        }
-        row.addView(stopBtn, sideParams(8))
+        row.addView(nextBtn, LinearLayout.LayoutParams(dp(56), dp(56)).apply { marginStart = dp(10) })
         return row
     }
-
-    private fun sideParams(leftDp: Int) = LinearLayout.LayoutParams(
-        ViewGroup.LayoutParams.WRAP_CONTENT,
-        ViewGroup.LayoutParams.WRAP_CONTENT
-    ).apply { marginStart = dp(leftDp) }
 
     private fun renderChips() {
         if (!::chipsRow.isInitialized) return
@@ -451,7 +446,18 @@ class PageReview(private val host: MainActivity) : ReviewBus.Listener {
         stateLine.setTextColor(if (s.gap) Ui.GOOD else Ui.MUTED)
         stateLine.visibility = if (stateLine.text.isBlank()) View.GONE else View.VISIBLE
 
-        // 大按钮
+        // 大按钮：开始前是近黑实心，播放中换成绿色 —— 绿色在这个 App 里只表示「正在播放」
+        if (s.running != playSkin) {
+            playSkin = s.running
+            playCircle.background = Ui.ripple(
+                host, 28,
+                if (s.running) Ui.GOOD else Ui.SOLID,
+                0, Ui.STROKE
+            )
+            val fg = if (s.running) Ui.ON_PLAY else Ui.ON_SOLID
+            playIcon.imageTintList = android.content.res.ColorStateList.valueOf(fg)
+            playLabel.setTextColor(fg)
+        }
         if (s.running) {
             playIcon.setImageResource(
                 if (s.paused) R.drawable.ic_play else R.drawable.ic_pause

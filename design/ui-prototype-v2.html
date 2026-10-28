@@ -1,0 +1,740 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SpeakLoop 界面原型 v2</title>
+<style>
+:root{
+  --bg:#F4F5F7; --surface:#FFFFFF; --surface2:#F4F6F9; --line:#E6E9EE;
+  --ink1:#0F1115; --ink2:#4A5160; --ink3:#6E7686;
+  --brand:#5B54D6; --brand-soft:#EDEBFF; --on-brand:#FFFFFF;
+  --play:#12B76A; --play-soft:#E9F8F1;
+  --danger:#D92D20; --badge:#EEF2FF; --on-badge:#4F63E8;
+  --solid:#16181D; --on-solid:#FFFFFF;
+  --r-s:8px; --r-m:12px; --r-l:20px;
+  --sp1:4px; --sp2:8px; --sp3:12px; --sp4:16px; --sp5:20px; --sp6:24px; --sp8:32px;
+}
+[data-theme="dark"]{
+  --bg:#0B0F14; --surface:#141C26; --surface2:#1C2632; --line:#253140;
+  --ink1:#E9EFF6; --ink2:#A8B4C4; --ink3:#7E8A9A;
+  --brand:#7C9BFF; --brand-soft:#1B2C48; --on-brand:#07101F;
+  --play:#34D399; --play-soft:#123527;
+  --danger:#FF7A7A; --badge:#1D2A44; --on-badge:#8AB4FF;
+  --solid:#E9EFF6; --on-solid:#0B0F14;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
+  background:#0A0C10; color:#E9EFF6; padding:40px 24px 64px; -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1900px;margin:0 auto}
+.head{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;margin-bottom:36px;flex-wrap:wrap}
+.head h1{font-size:22px;font-weight:500;letter-spacing:-.01em}
+.head p{font-size:13px;color:#7E8A9A;margin-top:6px;line-height:1.6}
+.toggle{
+  display:flex;background:#141C26;border:1px solid #253140;border-radius:999px;padding:3px;gap:2px;
+}
+.toggle button{
+  border:0;background:transparent;color:#7E8A9A;font-size:12px;padding:8px 16px;border-radius:999px;
+  cursor:pointer;font-family:inherit;min-height:36px;
+}
+.toggle button[aria-pressed="true"]{background:#253140;color:#E9EFF6}
+.stage{display:flex;gap:32px;flex-wrap:wrap;align-items:flex-start}
+figure{width:340px}
+.phone{
+  width:340px;height:716px;border-radius:38px;padding:9px;
+  background:#1A2029;border:1px solid #2A3441;box-shadow:0 18px 48px rgba(0,0,0,.5);
+}
+.screen{
+  width:100%;height:100%;border-radius:30px;overflow:hidden;background:var(--bg);color:var(--ink1);
+  display:flex;flex-direction:column;position:relative;
+}
+figcaption{font-size:12px;color:#7E8A9A;margin-top:14px;text-align:center;line-height:1.6}
+figcaption b{color:#A8B4C4;font-weight:500}
+.sbar{display:flex;justify-content:space-between;align-items:center;padding:10px 22px 2px;font-size:11px;color:var(--ink2);flex:0 0 auto}
+.sbar .dots{display:flex;gap:3px;align-items:center}
+.sbar .dots i{width:3px;height:3px;border-radius:99px;background:var(--ink3);display:block}
+.sbar .bat{width:18px;height:9px;border:1px solid var(--ink3);border-radius:2px;position:relative}
+.sbar .bat::after{content:"";position:absolute;inset:1.5px;width:70%;background:var(--ink2);border-radius:1px}
+.body{flex:1;overflow:hidden;padding:0 16px;display:flex;flex-direction:column}
+.ptitle{font-size:28px;font-weight:500;letter-spacing:-.02em;line-height:1.2}
+.prow{display:flex;align-items:center;justify-content:space-between;padding:16px 0 12px}
+.addbtn{
+  width:44px;height:44px;border-radius:999px;background:var(--solid);color:var(--on-solid);
+  display:grid;place-items:center;font-size:22px;font-weight:400;line-height:1;flex:0 0 auto;
+}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-l);padding:16px}
+.card.flat{border-radius:var(--r-m)}
+.meta{font-size:11px;color:var(--ink3);letter-spacing:.02em}
+.t13{font-size:13px;color:var(--ink2);line-height:1.55}
+.t16{font-size:16px;color:var(--ink1);line-height:1.5;font-weight:400}
+.bar{height:6px;border-radius:99px;background:var(--surface2);overflow:hidden;display:flex}
+.bar i{display:block;height:100%;background:var(--brand)}
+.bar i.on{background:var(--play)}
+.pill{
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  min-height:32px;padding:0 14px;border-radius:999px;font-size:13px;
+  background:var(--surface2);color:var(--ink2);border:1px solid transparent;white-space:nowrap;
+}
+.pill.on{background:var(--brand-soft);color:var(--brand);border-color:var(--brand)}
+.tabs{display:flex;justify-content:space-around;align-items:center;padding:10px 8px 22px;border-top:1px solid var(--line);background:var(--surface);flex:0 0 auto}
+.tab{display:flex;flex-direction:column;align-items:center;gap:4px;min-width:64px;min-height:48px;justify-content:center;color:var(--ink3);font-size:11px}
+.tab.on{color:var(--brand)}
+.tab svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.group{display:flex;align-items:center;justify-content:space-between;padding:20px 0 10px}
+.group b{font-size:13px;font-weight:500;color:var(--ink1)}
+.row{
+  display:flex;align-items:center;gap:12px;padding:13px 14px;border-radius:var(--r-m);
+  background:var(--surface);border:1px solid var(--line);margin-bottom:8px;min-height:64px;
+}
+.badge{
+  width:40px;height:40px;border-radius:var(--r-s);background:var(--badge);color:var(--on-badge);
+  display:grid;place-items:center;font-size:15px;font-weight:500;flex:0 0 auto;
+}
+.row .txt{flex:1;min-width:0}
+.row .txt .en{font-size:16px;color:var(--ink1);line-height:1.35;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row .txt .cn{font-size:13px;color:var(--ink2);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.count{font-size:11px;color:var(--ink3);flex:0 0 auto}
+.lineitem{display:flex;gap:10px;padding:11px 0;border-bottom:1px solid var(--line);position:relative}
+.lineitem:last-child{border-bottom:0}
+.lineitem .tag{width:30px;font-size:11px;color:var(--ink3);padding-top:2px;flex:0 0 auto}
+.lineitem .col{flex:1;min-width:0}
+.lineitem .en{font-size:16px;color:var(--ink1);line-height:1.4}
+.lineitem .cn{font-size:13px;color:var(--ink2);margin-top:2px}
+.lineitem.now .en{color:var(--play);font-weight:500}
+.lineitem.now .cn,.lineitem.now .tag{color:var(--play)}
+.lineitem.now::before{content:"";position:absolute;left:-16px;top:9px;bottom:9px;width:3px;border-radius:99px;background:var(--play)}
+.bigbtn{
+  display:flex;align-items:center;justify-content:center;gap:10px;height:56px;border-radius:999px;
+  background:var(--solid);color:var(--on-solid);font-size:16px;font-weight:500;
+}
+.bigbtn.play{background:var(--play);color:#04140D}
+.ghost{
+  display:flex;align-items:center;justify-content:center;height:56px;padding:0 18px;border-radius:999px;
+  background:var(--surface);color:var(--ink1);border:1px solid var(--line);font-size:14px;font-weight:500;
+}
+.icobtn{
+  width:56px;height:56px;border-radius:999px;background:var(--surface);border:1px solid var(--line);
+  display:grid;place-items:center;color:var(--ink1);flex:0 0 auto;
+}
+.icobtn svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.hint{font-size:11px;color:var(--ink3);text-align:center;padding-top:10px}
+.kpi{font-size:34px;font-weight:500;letter-spacing:-.03em;font-variant-numeric:tabular-nums;line-height:1.1}
+.kpi small{font-size:13px;font-weight:400;color:var(--ink3);letter-spacing:0;margin-left:3px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.heat{display:grid;grid-template-columns:repeat(13,1fr);gap:3px}
+.heat i{aspect-ratio:1;border-radius:2px;background:var(--surface2);display:block}
+.heat i.l1{background:color-mix(in srgb,var(--play) 28%,var(--surface2))}
+.heat i.l2{background:color-mix(in srgb,var(--play) 52%,var(--surface2))}
+.heat i.l3{background:color-mix(in srgb,var(--play) 76%,var(--surface2))}
+.heat i.l4{background:var(--play)}
+.spark{display:flex;align-items:flex-end;gap:5px;height:60px}
+.spark i{flex:1;background:var(--brand-soft);border-radius:3px 3px 0 0;display:block;position:relative}
+.spark i.on{background:var(--brand)}
+.bubble{max-width:88%;padding:11px 14px;border-radius:16px;font-size:15px;line-height:1.45}
+.bubble.a{background:var(--surface2);color:var(--ink1);border-bottom-left-radius:6px}
+.bubble.b{background:var(--brand-soft);color:var(--ink1);border-bottom-right-radius:6px;margin-left:auto}
+.bubble .cn{font-size:12px;color:var(--ink2);margin-top:3px}
+.setrow{display:flex;align-items:center;justify-content:space-between;min-height:52px;padding:0 2px}
+.setrow .k{font-size:15px;color:var(--ink1)}
+.setrow .v{font-size:13px;color:var(--ink3)}
+.divider{height:1px;background:var(--line)}
+.sec{font-size:11px;color:var(--ink3);letter-spacing:.06em;padding:22px 0 8px}
+.navtop{display:flex;align-items:center;justify-content:space-between;padding:10px 0 14px}
+.navtop .ttl{font-size:16px;font-weight:500}
+.back{width:40px;height:40px;display:grid;place-items:center;color:var(--ink1)}
+.back svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.spec{margin-top:56px;border-top:1px solid #1E2733;padding-top:28px}
+.spec h2{font-size:15px;font-weight:500;margin-bottom:14px;color:#E9EFF6}
+.spec table{width:100%;border-collapse:collapse;font-size:12.5px}
+.spec th,.spec td{text-align:left;padding:9px 12px;border-bottom:1px solid #1E2733;vertical-align:top}
+.spec th{color:#7E8A9A;font-weight:400;font-size:11.5px;letter-spacing:.03em}
+.spec td{color:#A8B4C4;line-height:1.6}
+.spec td code{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:#8AB4FF;background:#141C26;padding:1px 5px;border-radius:4px}
+.spec .ok{color:#34D399}
+
+/* ---- 弹层 / 输入 / 状态件 ---- */
+.maska{position:absolute;inset:0;background:rgba(0,0,0,.55);backdrop-filter:blur(1.5px)}
+.sheet{
+  position:absolute;left:0;right:0;bottom:0;background:var(--surface);
+  border-radius:var(--r-l) var(--r-l) 0 0;padding:10px 16px 22px;
+  border-top:1px solid var(--line);
+}
+.sheetgrip{width:36px;height:4px;border-radius:99px;background:var(--line);margin:0 auto 14px}
+.sheettitle{font-size:20px;font-weight:500;letter-spacing:-.01em;margin-bottom:14px}
+.inputbox{
+  display:flex;align-items:center;gap:2px;min-height:52px;padding:0 14px;
+  background:var(--surface2);border:1.5px solid var(--brand);border-radius:var(--r-m);
+  font-size:16px;color:var(--ink1);
+}
+.inputbox .ph{color:var(--ink3)}
+.caret{width:1.5px;height:19px;background:var(--brand);display:inline-block;animation:blink 1.1s step-end infinite}
+@keyframes blink{50%{opacity:0}}
+.minibtn{
+  display:inline-flex;align-items:center;gap:7px;height:40px;padding:0 14px;border-radius:999px;
+  background:var(--surface2);color:var(--ink2);font-size:13px;border:1px solid var(--line);
+}
+.minibtn svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round}
+.checkrow{display:flex;align-items:center;gap:10px;min-height:48px;font-size:15px;color:var(--ink1)}
+.cbox{width:20px;height:20px;border-radius:6px;border:1.5px solid var(--line);flex:0 0 auto;display:grid;place-items:center}
+.cbox.on{background:var(--brand);border-color:var(--brand);color:var(--on-brand)}
+.cbox.on::after{content:"";width:9px;height:5px;border-left:2px solid currentColor;border-bottom:2px solid currentColor;transform:rotate(-45deg) translate(1px,-1px)}
+.cbox.off{opacity:.45}
+
+/* ---- 录音浮层 ---- */
+.recwrap{
+  position:absolute;left:16px;right:16px;bottom:24px;background:var(--surface);
+  border:1px solid var(--line);border-radius:var(--r-l);padding:18px 16px;
+  box-shadow:0 12px 32px rgba(0,0,0,.35);
+}
+.wave{display:flex;align-items:center;justify-content:center;gap:3px;height:36px;margin:6px 0 12px}
+.wave i{width:3px;border-radius:99px;background:var(--play);display:block}
+.recstatus{text-align:center;font-size:13px;color:var(--ink2)}
+.rectime{text-align:center;font-size:20px;font-weight:500;color:var(--play);font-variant-numeric:tabular-nums;margin-top:2px}
+
+/* ---- 空状态 ---- */
+.emptybox{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:6px;padding-bottom:40px}
+.emptybox .ill{width:96px;height:96px;border-radius:24px;background:var(--surface2);border:1px solid var(--line);display:grid;place-items:center;margin-bottom:12px}
+.emptybox .ill svg{width:44px;height:44px;stroke:var(--ink3);fill:none;stroke-width:1.4;stroke-linecap:round;stroke-linejoin:round}
+.emptybox h3{font-size:20px;font-weight:500;letter-spacing:-.01em}
+.emptybox p{font-size:13px;color:var(--ink2);line-height:1.6;max-width:230px}
+
+/* ---- 复习待机 ---- */
+.readywrap{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;padding-bottom:24px}
+.bigring{
+  width:132px;height:132px;border-radius:999px;background:var(--play);color:#04140D;
+  display:grid;place-items:center;box-shadow:0 0 0 12px var(--play-soft);
+}
+.bigring svg{width:46px;height:46px;fill:currentColor}
+.daychip{display:inline-flex;align-items:center;gap:6px;height:36px;padding:0 14px;border-radius:999px;background:var(--surface);border:1px solid var(--line);font-size:13px;color:var(--ink1)}
+.daychip svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+
+/* ---- 组件状态矩阵 ---- */
+.matrix{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:14px;margin-top:6px}
+.mcell{background:#111823;border:1px solid #1E2733;border-radius:10px;padding:14px}
+.mcell .lbl{font-size:11px;color:#7E8A9A;margin-bottom:10px;letter-spacing:.04em}
+.swatch{height:44px;border-radius:10px;display:grid;place-items:center;font-size:13px;font-weight:500}
+.dis{opacity:.38}
+.press{transform:translateY(1px);filter:brightness(.9)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <div>
+      <h1>SpeakLoop 界面原型 v2</h1>
+      <p>通勤跟读工具 · 5 屏高保真原型 · 字号收敛为 5 档，对比度全部达到 WCAG AA，播放态统一由绿色承载</p>
+    </div>
+    <div class="toggle" role="group" aria-label="主题切换">
+      <button id="btn-dark" aria-pressed="true">深色</button>
+      <button id="btn-light" aria-pressed="false">浅色</button>
+    </div>
+  </div>
+
+  <div class="stage">
+
+    <figure>
+      <div class="phone"><div class="screen">
+        <div class="sbar"><span>9:41</span><span class="dots"><i></i><i></i><i></i><span class="bat"></span></span></div>
+        <div class="body">
+          <div class="prow">
+            <div>
+              <div class="ptitle">短语库</div>
+              <div class="t13" style="margin-top:6px">今天练了 3 条 · 连续 7 天</div>
+            </div>
+            <div class="addbtn">+</div>
+          </div>
+          <div class="card" style="margin-bottom:14px">
+            <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px">
+              <span class="meta">今日目标</span>
+              <span style="font-size:13px;color:var(--ink2)">3 / 5 条</span>
+            </div>
+            <div class="bar"><i style="width:60%"></i></div>
+            <div style="display:flex;justify-content:space-between;margin-top:12px">
+              <span class="t13">还有 2 条就达标</span>
+              <span style="font-size:13px;color:var(--brand);font-weight:500">去复习 →</span>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;margin-bottom:4px">
+            <span class="pill on">全部 24</span>
+            <span class="pill">没练过 6</span>
+            <span class="pill">常错 3</span>
+          </div>
+          <div class="group"><b>今天</b><span class="meta">4 条</span></div>
+          <div class="row">
+            <div class="badge">F</div>
+            <div class="txt"><div class="en">Forgive me for</div><div class="cn">请原谅我…</div></div>
+            <span class="count">6 次</span>
+          </div>
+          <div class="row">
+            <div class="badge">I</div>
+            <div class="txt"><div class="en">I'm running late</div><div class="cn">我要迟到了</div></div>
+            <span class="count">3 次</span>
+          </div>
+          <div class="row">
+            <div class="badge">L</div>
+            <div class="txt"><div class="en">Let me think about it</div><div class="cn">让我想一想</div></div>
+            <span class="count">1 次</span>
+          </div>
+          <div class="group"><b>昨天</b><span class="meta">3 条</span></div>
+          <div class="row" style="margin-bottom:0">
+            <div class="badge">G</div>
+            <div class="txt"><div class="en">Get the hang of</div><div class="cn">掌握…的窍门</div></div>
+            <span class="count">4 次</span>
+          </div>
+        </div>
+        <div class="tabs">
+          <div class="tab on"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg><span>短语</span></div>
+          <div class="tab"><svg viewBox="0 0 24 24"><path d="M4 19V9m5 10V5m5 14v-7m5 7V8"/></svg><span>统计</span></div>
+          <div class="tab"><svg viewBox="0 0 24 24"><path d="M12 4v11m0 0l-4-4m4 4l4-4M5 20h14"/></svg><span>复习</span></div>
+          <div class="tab"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v2m0 14v2M3 12h2m14 0h2M5.6 5.6l1.4 1.4m10 10l1.4 1.4m0-12.8l-1.4 1.4m-10 10L5.6 18.4"/></svg><span>设置</span></div>
+        </div>
+      </div></div>
+      <figcaption><b>短语库</b><br>目标卡压缩为三行，列表行高度 64dp、触摸目标达标</figcaption>
+    </figure>
+
+    <figure>
+      <div class="phone"><div class="screen">
+        <div class="sbar"><span>9:41</span><span class="dots"><i></i><i></i><i></i><span class="bat"></span></span></div>
+        <div class="body">
+          <div class="navtop">
+            <div class="back"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></div>
+            <span class="ttl">第 3 / 8 条</span>
+            <div class="back" style="color:var(--ink3)"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></div>
+          </div>
+          <div class="bar" style="margin-bottom:16px"><i class="on" style="width:31%"></i></div>
+
+          <div class="card" style="padding:18px;margin-bottom:12px">
+            <div class="meta" style="color:var(--brand);letter-spacing:.1em">短语</div>
+            <div style="font-size:24px;font-weight:500;letter-spacing:-.02em;line-height:1.3;margin-top:8px">Let me think about it</div>
+            <div class="t13" style="margin-top:6px">让我想一想</div>
+          </div>
+
+          <div class="card flat" style="padding:12px 16px;flex:1;overflow:hidden">
+            <div class="lineitem"><span class="tag">短语</span><div class="col"><div class="en" style="font-size:15px">Let me think about it</div><div class="cn">让我想一想</div></div></div>
+            <div class="lineitem now"><span class="tag">短语</span><div class="col"><div class="en" style="font-size:15px">Let me think about it</div><div class="cn">让我想一想</div></div></div>
+            <div class="lineitem"><span class="tag">例句</span><div class="col"><div class="en" style="font-size:15px">Let me think about it first.</div><div class="cn">让我先想一想。</div></div></div>
+            <div class="lineitem"><span class="tag">A</span><div class="col"><div class="en" style="font-size:15px">Can you do it today?</div><div class="cn">你今天能做吗？</div></div></div>
+            <div class="lineitem"><span class="tag">B</span><div class="col"><div class="en" style="font-size:15px">Let me think about it.</div><div class="cn">让我想一想。</div></div></div>
+          </div>
+
+          <div style="text-align:center;font-size:13px;color:var(--play);font-weight:500;padding:14px 0 10px">该你了 · 3 秒</div>
+          <div style="display:flex;gap:10px;align-items:center;padding-bottom:6px">
+            <div class="icobtn"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></div>
+            <div class="bigbtn play" style="flex:1"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>暂停</div>
+            <div class="icobtn"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg></div>
+          </div>
+          <div class="hint">本条第 2 / 5 句 · 耳机线控可暂停</div>
+        </div>
+      </div></div>
+      <figcaption><b>复习 · 播放中</b><br>播放态全部交给绿色；左右跳条按钮 56dp，中间主按钮最高层级</figcaption>
+    </figure>
+
+    <figure>
+      <div class="phone"><div class="screen">
+        <div class="sbar"><span>9:41</span><span class="dots"><i></i><i></i><i></i><span class="bat"></span></span></div>
+        <div class="body">
+          <div class="navtop">
+            <div class="back"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></div>
+            <span class="ttl">短语详情</span>
+            <div class="back" style="color:var(--ink3)"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.5" fill="currentColor"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/><circle cx="19" cy="12" r="1.5" fill="currentColor"/></svg></div>
+          </div>
+
+          <div class="card" style="padding:18px;margin-bottom:12px">
+            <div class="meta" style="color:var(--brand);letter-spacing:.1em">短语</div>
+            <div style="font-size:24px;font-weight:500;letter-spacing:-.02em;line-height:1.3;margin-top:8px">Forgive me for</div>
+            <div class="t13" style="margin-top:6px">请原谅我…</div>
+            <div style="display:flex;gap:10px;margin-top:16px">
+              <div class="bigbtn" style="flex:1;height:48px;font-size:15px"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5l11 7-11 7z"/></svg>朗读全部</div>
+              <div class="ghost" style="height:48px"><svg width="16" height="16" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="1.8" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0014 0M12 18v3"/></svg>跟读</div>
+            </div>
+          </div>
+
+          <div class="card flat" style="padding:12px 16px;margin-bottom:10px">
+            <div class="meta" style="margin-bottom:8px">跟读结果</div>
+            <div class="t16" style="font-size:15px">
+              Forgive <span style="color:var(--play)">me</span> <span style="color:var(--danger);text-decoration:underline wavy">for</span>
+            </div>
+            <div style="display:flex;gap:14px;margin-top:8px;font-size:12px">
+              <span style="color:var(--play)">✓ 2 处读对</span>
+              <span style="color:var(--danger)">1 处漏读</span>
+            </div>
+          </div>
+
+          <div class="group"><b>例句</b><span class="meta">2 条</span></div>
+          <div class="card flat" style="padding:12px 14px;margin-bottom:8px">
+            <div class="t16" style="font-size:15px">Forgive me for being late.</div>
+            <div class="cn" style="font-size:13px;color:var(--ink2);margin-top:3px">请原谅我迟到了。</div>
+          </div>
+          <div class="card flat" style="padding:12px 14px;margin-bottom:8px">
+            <div class="t16" style="font-size:15px">Forgive me for asking.</div>
+            <div class="cn" style="font-size:13px;color:var(--ink2);margin-top:3px">请原谅我问一句。</div>
+          </div>
+
+          <div class="group"><b>情景对话</b></div>
+          <div style="display:flex;flex-direction:column;gap:8px;overflow:hidden">
+            <div class="bubble a">Forgive me for interrupting.<div class="cn">抱歉打断一下。</div></div>
+            <div class="bubble b">No worries, go ahead.<div class="cn">没事，你说。</div></div>
+          </div>
+        </div>
+      </div></div>
+      <figcaption><b>短语详情</b><br>两个主操作平级；跟读结果用绿/红区分对错，不再与强调色混用</figcaption>
+    </figure>
+
+    <figure>
+      <div class="phone"><div class="screen">
+        <div class="sbar"><span>9:41</span><span class="dots"><i></i><i></i><i></i><span class="bat"></span></span></div>
+        <div class="body">
+          <div class="prow" style="padding-bottom:6px"><div class="ptitle">统计</div><span class="meta">近 91 天</span></div>
+
+          <div class="card" style="margin-bottom:12px">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start">
+              <div>
+                <div class="meta">本月已练</div>
+                <div class="kpi" style="margin-top:4px;color:var(--ink1)">68<small>条</small></div>
+              </div>
+              <div style="text-align:right">
+                <div class="meta">连续打卡</div>
+                <div class="kpi" style="margin-top:4px;color:var(--play)">7<small>天</small></div>
+              </div>
+            </div>
+            <div class="divider" style="margin:14px 0"></div>
+            <div class="meta" style="margin-bottom:10px">近 8 周趋势</div>
+            <div class="spark">
+              <i style="height:42%"></i><i style="height:58%"></i><i style="height:36%"></i>
+              <i style="height:72%"></i><i style="height:64%"></i><i style="height:88%"></i>
+              <i style="height:76%"></i><i class="on" style="height:52%"></i>
+            </div>
+          </div>
+
+          <div class="card" style="margin-bottom:12px">
+            <div style="display:flex;justify-content:space-between;margin-bottom:12px">
+              <b style="font-size:13px;font-weight:500">练习记录</b>
+              <span class="meta">颜色越深练得越多</span>
+            </div>
+            <div class="heat">
+              <i></i><i class="l1"></i><i></i><i class="l2"></i><i></i><i class="l1"></i><i></i><i></i><i class="l3"></i><i></i><i class="l1"></i><i></i><i class="l2"></i>
+              <i class="l2"></i><i></i><i class="l1"></i><i class="l4"></i><i class="l1"></i><i></i><i class="l2"></i><i class="l1"></i><i></i><i class="l3"></i><i></i><i class="l1"></i><i></i>
+              <i></i><i class="l1"></i><i class="l3"></i><i></i><i class="l2"></i><i class="l1"></i><i></i><i class="l2"></i><i class="l4"></i><i></i><i class="l1"></i><i></i><i class="l2"></i>
+              <i class="l1"></i><i></i><i class="l2"></i><i class="l1"></i><i></i><i class="l2"></i><i class="l1"></i><i></i><i class="l3"></i><i class="l2"></i><i></i><i class="l1"></i><i></i>
+              <i></i><i class="l2"></i><i class="l1"></i><i></i><i class="l3"></i><i></i><i class="l1"></i><i class="l2"></i><i></i><i class="l1"></i><i class="l2"></i><i></i><i class="l3"></i>
+            </div>
+          </div>
+
+          <div class="card">
+            <div style="display:flex;justify-content:space-between;margin-bottom:10px">
+              <b style="font-size:13px;font-weight:500">最该复习</b>
+              <span class="meta">练了 5 次以上仍卡</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0">
+              <span class="t16" style="font-size:15px">Get the hang of</span>
+              <span class="count">卡 4 次</span>
+            </div>
+            <div class="divider"></div>
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0">
+              <span class="t16" style="font-size:15px">It depends on</span>
+              <span class="count">卡 3 次</span>
+            </div>
+          </div>
+        </div>
+        <div class="tabs">
+          <div class="tab"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg><span>短语</span></div>
+          <div class="tab on"><svg viewBox="0 0 24 24"><path d="M4 19V9m5 10V5m5 14v-7m5 7V8"/></svg><span>统计</span></div>
+          <div class="tab"><svg viewBox="0 0 24 24"><path d="M12 4v11m0 0l-4-4m4 4l4-4M5 20h14"/></svg><span>复习</span></div>
+          <div class="tab"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v2m0 14v2M3 12h2m14 0h2M5.6 5.6l1.4 1.4m10 10l1.4 1.4m0-12.8l-1.4 1.4m-10 10L5.6 18.4"/></svg><span>设置</span></div>
+        </div>
+      </div></div>
+      <figcaption><b>统计</b><br>新增近 8 周趋势与「最该复习」；连续打卡改用绿色，与播放态形成同一语义</figcaption>
+    </figure>
+
+    <figure>
+      <div class="phone"><div class="screen">
+        <div class="sbar"><span>9:41</span><span class="dots"><i></i><i></i><i></i><span class="bat"></span></span></div>
+        <div class="body">
+          <div class="prow" style="padding-bottom:4px"><div class="ptitle">设置</div><span class="meta">1.9.2</span></div>
+
+          <div class="sec">复习</div>
+          <div class="card flat" style="padding:2px 14px">
+            <div class="setrow"><span class="k">每天练几条</span><span class="v">5 条</span></div>
+            <div class="divider"></div>
+            <div class="setrow"><span class="k">一轮最多几条</span><span class="v">15 条</span></div>
+            <div class="divider"></div>
+            <div class="setrow"><span class="k">补上从没练过的</span><span class="v" style="color:var(--play)">开</span></div>
+          </div>
+
+          <div class="sec">播放</div>
+          <div class="card flat" style="padding:2px 14px">
+            <div class="setrow"><span class="k">朗读语速</span><span class="v">×1.0</span></div>
+            <div class="divider"></div>
+            <div class="setrow"><span class="k">例句后留白</span><span class="v">4 秒</span></div>
+            <div class="divider"></div>
+            <div class="setrow"><span class="k">循环播放</span><span class="v">关</span></div>
+          </div>
+
+          <div class="sec">外观</div>
+          <div class="card flat" style="padding:2px 14px">
+            <div class="setrow"><span class="k">主题</span><span class="v">深色</span></div>
+            <div class="divider"></div>
+            <div class="setrow"><span class="k">字号</span><span class="v">标准</span></div>
+          </div>
+
+          <div class="sec">AI 补全</div>
+          <div class="card flat" style="padding:2px 14px">
+            <div class="setrow"><span class="k">服务地址</span><span class="v">已配置</span></div>
+            <div class="divider"></div>
+            <div class="setrow"><span class="k">密钥</span><span class="v">已配置</span></div>
+            <div class="divider"></div>
+            <div class="setrow"><span class="k">测试连接</span><span class="v" style="color:var(--brand)">运行</span></div>
+          </div>
+
+          <div class="sec">数据</div>
+          <div class="card flat" style="padding:2px 14px">
+            <div class="setrow"><span class="k">导出备份</span><span class="v" style="color:var(--brand)">导出 JSON</span></div>
+            <div class="divider"></div>
+            <div class="setrow"><span class="k">短语总数</span><span class="v">24 条</span></div>
+          </div>
+        </div>
+        <div class="tabs">
+          <div class="tab"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg><span>短语</span></div>
+          <div class="tab"><svg viewBox="0 0 24 24"><path d="M4 19V9m5 10V5m5 14v-7m5 7V8"/></svg><span>统计</span></div>
+          <div class="tab"><svg viewBox="0 0 24 24"><path d="M12 4v11m0 0l-4-4m4 4l4-4M5 20h14"/></svg><span>复习</span></div>
+          <div class="tab on"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v2m0 14v2M3 12h2m14 0h2M5.6 5.6l1.4 1.4m10 10l1.4 1.4m0-12.8l-1.4 1.4m-10 10L5.6 18.4"/></svg><span>设置</span></div>
+        </div>
+      </div></div>
+      <figcaption><b>设置</b><br>按用途分为 5 组；版本号改为读取真实构建号，不再写死</figcaption>
+    </figure>
+
+    <figure>
+      <div class="phone"><div class="screen">
+        <div class="sbar"><span>9:41</span><span class="dots"><i></i><i></i><i></i><span class="bat"></span></span></div>
+        <div class="body">
+          <div class="prow"><div class="ptitle">短语库</div><div class="addbtn">+</div></div>
+          <div class="group"><b>今天</b><span class="meta">4 条</span></div>
+          <div class="row"><div class="badge">F</div><div class="txt"><div class="en">Forgive me for</div><div class="cn">请原谅我…</div></div></div>
+          <div class="row"><div class="badge">I</div><div class="txt"><div class="en">I'm running late</div><div class="cn">我要迟到了</div></div></div>
+        </div>
+        <div class="maska"></div>
+        <div class="sheet">
+          <div class="sheetgrip"></div>
+          <div class="sheettitle">添加短语</div>
+          <div class="inputbox"><span>Forgive me fo</span><span class="caret"></span></div>
+          <div style="margin-top:12px">
+            <span class="minibtn"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0014 0M12 18v3"/></svg>说一遍</span>
+          </div>
+          <div class="checkrow" style="margin-top:6px"><span class="cbox on"></span><span>用 AI 补全释义和例句</span></div>
+          <div style="display:flex;gap:10px;margin-top:16px">
+            <div class="ghost" style="flex:1;height:48px">取消</div>
+            <div class="bigbtn" style="flex:1;height:48px;font-size:15px">保存</div>
+          </div>
+        </div>
+      </div></div>
+      <figcaption><b>新增短语 · 输入态</b><br>底部弹层而非居中弹窗，单手可达；输入框聚焦有 1.5dp 品牌色描边</figcaption>
+    </figure>
+
+    <figure>
+      <div class="phone"><div class="screen">
+        <div class="sbar"><span>9:41</span><span class="dots"><i></i><i></i><i></i><span class="bat"></span></span></div>
+        <div class="body">
+          <div class="navtop">
+            <div class="back"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></div>
+            <span class="ttl">跟读</span>
+            <div class="back" style="color:var(--ink3)"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></div>
+          </div>
+          <div class="card" style="padding:18px">
+            <div class="meta" style="color:var(--brand);letter-spacing:.1em">短句</div>
+            <div style="font-size:22px;font-weight:500;line-height:1.35;margin-top:8px">Forgive me for being late.</div>
+            <div class="t13" style="margin-top:6px">请原谅我迟到了。</div>
+          </div>
+          <div class="group"><b>刚才的录音</b><span class="meta">可回放</span></div>
+          <div class="row" style="min-height:56px"><span class="minibtn" style="border:0;background:transparent;padding-left:0"><svg viewBox="0 0 24 24"><path d="M7 5l10 7-10 7z"/></svg>回放</span><span class="meta" style="margin-left:auto">4 秒</span></div>
+        </div>
+        <div class="maska" style="background:rgba(0,0,0,.45)"></div>
+        <div class="recwrap">
+          <div class="recstatus">正在听… 请跟读</div>
+          <div class="wave">
+            <i style="height:10px"></i><i style="height:22px"></i><i style="height:34px"></i><i style="height:18px"></i>
+            <i style="height:30px"></i><i style="height:14px"></i><i style="height:26px"></i><i style="height:36px"></i>
+            <i style="height:20px"></i><i style="height:12px"></i><i style="height:28px"></i><i style="height:16px"></i>
+            <i style="height:8px"></i><i style="height:22px"></i><i style="height:12px"></i>
+          </div>
+          <div class="rectime">0:03</div>
+          <div style="display:flex;gap:10px;margin-top:16px">
+            <div class="ghost" style="flex:1;height:48px">取消</div>
+            <div class="bigbtn play" style="flex:1.4;height:48px;font-size:15px">停下，看结果</div>
+          </div>
+        </div>
+      </div></div>
+      <figcaption><b>跟读 · 录音中</b><br>浮层不遮挡原句，波形用绿色表示正在采集；超时 3.5 秒自动进入对比</figcaption>
+    </figure>
+
+    <figure>
+      <div class="phone"><div class="screen">
+        <div class="sbar"><span>9:41</span><span class="dots"><i></i><i></i><i></i><span class="bat"></span></span></div>
+        <div class="body">
+          <div class="prow"><div class="ptitle">短语库</div><div class="addbtn">+</div></div>
+          <div class="emptybox">
+            <div class="ill"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18M7 14h6"/></svg></div>
+            <h3>还没有短语</h3>
+            <p>点右上角加一条，AI 会顺手补上释义、例句和情景对话</p>
+            <div class="bigbtn" style="margin-top:18px;padding:0 28px;height:48px;font-size:15px">加第一条</div>
+          </div>
+        </div>
+        <div class="tabs">
+          <div class="tab on"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg><span>短语</span></div>
+          <div class="tab"><svg viewBox="0 0 24 24"><path d="M4 19V9m5 10V5m5 14v-7m5 7V8"/></svg><span>统计</span></div>
+          <div class="tab"><svg viewBox="0 0 24 24"><path d="M12 4v11m0 0l-4-4m4 4l4-4M5 20h14"/></svg><span>复习</span></div>
+          <div class="tab"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v2m0 14v2M3 12h2m14 0h2M5.6 5.6l1.4 1.4m10 10l1.4 1.4m0-12.8l-1.4 1.4m-10 10L5.6 18.4"/></svg><span>设置</span></div>
+        </div>
+      </div></div>
+      <figcaption><b>短语库 · 空状态</b><br>不写「暂无数据」；给图形、一句人话说明和一个直接可点的动作</figcaption>
+    </figure>
+
+    <figure>
+      <div class="phone"><div class="screen">
+        <div class="sbar"><span>9:41</span><span class="dots"><i></i><i></i><i></i><span class="bat"></span></span></div>
+        <div class="body">
+          <div class="prow" style="padding-bottom:8px">
+            <div class="ptitle">复习</div>
+            <span class="daychip">今天<svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></span>
+          </div>
+          <div class="readywrap">
+            <div class="bigring"><svg viewBox="0 0 24 24"><path d="M8 5l11 7-11 7z"/></svg></div>
+            <div style="text-align:center">
+              <div style="font-size:20px;font-weight:500;letter-spacing:-.01em">今天 5 条待复习</div>
+              <div class="t13" style="margin-top:6px">新增 3 条 · 待复习 2 条</div>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center">
+              <span class="pill">只读短语</span>
+              <span class="pill">循环</span>
+              <span class="pill">语速 1.0×</span>
+            </div>
+            <div class="hint" style="padding:0">点上面开始，锁屏也会继续读</div>
+          </div>
+        </div>
+        <div class="tabs">
+          <div class="tab"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg><span>短语</span></div>
+          <div class="tab"><svg viewBox="0 0 24 24"><path d="M4 19V9m5 10V5m5 14v-7m5 7V8"/></svg><span>统计</span></div>
+          <div class="tab on"><svg viewBox="0 0 24 24"><path d="M12 4v11m0 0l-4-4m4 4l4-4M5 20h14"/></svg><span>复习</span></div>
+          <div class="tab"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v2m0 14v2M3 12h2m14 0h2M5.6 5.6l1.4 1.4m10 10l1.4 1.4m0-12.8l-1.4 1.4m-10 10L5.6 18.4"/></svg><span>设置</span></div>
+        </div>
+      </div></div>
+      <figcaption><b>复习 · 待机</b><br>152dp 主按钮直达拇指热区；日期、选项都在首屏，不用滚动</figcaption>
+    </figure>
+
+  </div>
+
+  <div class="spec">
+    <h2>设计规格（可直接对照实现）</h2>
+    <table>
+      <thead><tr><th style="width:130px">类别</th><th style="width:180px">规格</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr><td>字号</td><td>11 / 13 / 16 / 20 / 28</td><td>砍掉原来的 9、10、12、14、15 五档。11sp 是下限，正文主档 16sp，短语大标题 24sp（详情 hero）</td></tr>
+        <tr><td>对比度</td><td><code>ink-2 #4A5160</code> 白底 7.6:1<br><code>ink-3 #6E7686</code> 白底 4.9:1</td><td class="ok">全部达到 WCAG AA 4.5:1。原来的 <code>#A8AEB8</code> 只有 2.2:1，已废弃</td></tr>
+        <tr><td>语义色</td><td>品牌紫 = 可点 / 导航<br>绿色 = 播放 · 跟读 · 达标<br>红 = 错误 · 漏读</td><td>把「播放到哪」从蓝色搬到绿色，和「该你了」统一，骑车扫一眼就知道现在是不是轮到自己</td></tr>
+        <tr><td>间距</td><td>4 / 8 / 12 / 16 / 20 / 24 / 32</td><td>8pt 栅格，4 只用于图标与文字的贴合微调</td></tr>
+        <tr><td>圆角</td><td>8 / 12 / 20 / 999</td><td>8 = 徽标与输入框，12 = 列表卡，20 = 内容卡，999 = 按钮与胶囊</td></tr>
+        <tr><td>触摸目标</td><td>最小 48×48dp</td><td>列表行 64dp，跳条按钮 56dp，底部 tab 48dp</td></tr>
+        <tr><td>字重</td><td>仅 400 / 500</td><td>标题用 500 建立层级，不靠加粗堆叠；避免 600/700 造成的视觉噪音</td></tr>
+        <tr><td>可访问性</td><td>支持系统字号放大至 130%</td><td>新增「字号」设置项，正文 16sp 基准可放大，布局使用弹性高度不写死</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="spec">
+    <h2>组件状态矩阵（深色主题实际取值）</h2>
+    <div class="matrix">
+      <div class="mcell">
+        <div class="lbl">主按钮 · 默认 / 按下 / 禁用</div>
+        <div class="swatch" style="background:#E9EFF6;color:#0B0F14;margin-bottom:8px">开始复习</div>
+        <div class="swatch press" style="background:#D4DCE6;color:#0B0F14;margin-bottom:8px">开始复习</div>
+        <div class="swatch dis" style="background:#E9EFF6;color:#0B0F14">开始复习</div>
+      </div>
+      <div class="mcell">
+        <div class="lbl">播放按钮 · 默认 / 按下</div>
+        <div class="swatch" style="background:#34D399;color:#04140D;margin-bottom:8px">暂停</div>
+        <div class="swatch press" style="background:#2BB586;color:#04140D">暂停</div>
+      </div>
+      <div class="mcell">
+        <div class="lbl">次要按钮 / 图标按钮</div>
+        <div class="swatch" style="background:#141C26;color:#E9EFF6;border:1px solid #253140;margin-bottom:8px">朗读全部</div>
+        <div style="display:flex;gap:8px">
+          <div class="swatch" style="width:56px;background:#141C26;border:1px solid #253140;color:#E9EFF6">‹</div>
+          <div class="swatch" style="flex:1;background:#141C26;border:1px solid #253140;color:#7E8A9A">禁用态</div>
+        </div>
+      </div>
+      <div class="mcell">
+        <div class="lbl">胶囊 · 默认 / 选中</div>
+        <div style="display:flex;gap:8px">
+          <div class="swatch" style="flex:1;background:#1C2632;color:#A8B4C4;border-radius:999px;font-size:12px">全部</div>
+          <div class="swatch" style="flex:1;background:#1B2C48;color:#7C9BFF;border:1px solid #7C9BFF;border-radius:999px;font-size:12px">常错</div>
+        </div>
+      </div>
+      <div class="mcell">
+        <div class="lbl">输入框 · 聚焦 / 错误</div>
+        <div style="height:44px;background:#1C2632;border:1.5px solid #7C9BFF;border-radius:12px;display:flex;align-items:center;padding:0 12px;font-size:14px;color:#E9EFF6;margin-bottom:8px">Forgive me fo</div>
+        <div style="height:44px;background:#1C2632;border:1.5px solid #FF7A7A;border-radius:12px;display:flex;align-items:center;padding:0 12px;font-size:14px;color:#E9EFF6">先写一个短语</div>
+      </div>
+      <div class="mcell">
+        <div class="lbl">列表行 · 默认 / 当前行</div>
+        <div style="background:#141C26;border:1px solid #253140;border-radius:12px;padding:10px 12px;margin-bottom:8px">
+          <div style="font-size:14px;color:#E9EFF6">Let me think about it</div>
+          <div style="font-size:12px;color:#A8B4C4;margin-top:2px">让我想一想</div>
+        </div>
+        <div style="background:#123527;border:1px solid #34D399;border-radius:12px;padding:10px 12px">
+          <div style="font-size:14px;color:#34D399">Let me think about it</div>
+          <div style="font-size:12px;color:#34D399;margin-top:2px">让我想一想</div>
+        </div>
+      </div>
+      <div class="mcell">
+        <div class="lbl">跟读对比 · 读对 / 漏读</div>
+        <div style="background:#141C26;border:1px solid #253140;border-radius:12px;padding:12px;font-size:14px;color:#E9EFF6;line-height:1.6">
+          Forgive <span style="color:#34D399">me</span> <span style="color:#FF7A7A;text-decoration:underline wavy">for</span>
+        </div>
+      </div>
+      <div class="mcell">
+        <div class="lbl">语义色分工</div>
+        <div style="display:flex;gap:6px">
+          <div style="flex:1;height:44px;border-radius:8px;background:#7C9BFF;display:grid;place-items:center;font-size:11px;color:#07101F">可点</div>
+          <div style="flex:1;height:44px;border-radius:8px;background:#34D399;display:grid;place-items:center;font-size:11px;color:#04140D">播放</div>
+          <div style="flex:1;height:44px;border-radius:8px;background:#FF7A7A;display:grid;place-items:center;font-size:11px;color:#2A0808">错误</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="spec">
+    <h2>关键尺寸标注</h2>
+    <table>
+      <thead><tr><th style="width:170px">组件</th><th style="width:210px">尺寸</th><th>细节</th></tr></thead>
+      <tbody>
+        <tr><td>页面横向留白</td><td><code>16dp</code></td><td>所有页面内容区左右各 16dp，卡片内再 16dp</td></tr>
+        <tr><td>页面标题</td><td>28sp / 500 / 字距 -0.02em</td><td>距顶部安全区 16dp</td></tr>
+        <tr><td>卡片</td><td>圆角 20dp，内边距 16dp</td><td>列表类卡片圆角降到 12dp，内边距 12–14dp</td></tr>
+        <tr><td>列表行</td><td>高 64dp，间距 8dp</td><td>徽标 40×40dp，圆角 8dp；文字左距 12dp</td></tr>
+        <tr><td>底部主按钮</td><td>高 56dp，圆角 999</td><td>复习页中间主按钮宽度弹性，最小 120dp</td></tr>
+        <tr><td>跳条图标按钮</td><td>56×56dp 正圆</td><td>与主按钮间距 10dp</td></tr>
+        <tr><td>底部 tab</td><td>高 48dp，图标 22dp</td><td>图标与文字间距 4dp，安全区内边距 22dp</td></tr>
+        <tr><td>复习待机主钮</td><td>132×132dp + 12dp 外环</td><td>外环用 <code>play-soft</code> 做视觉延伸</td></tr>
+        <tr><td>底部弹层</td><td>圆角 20dp（仅上两角）</td><td>顶部抓手 36×4dp；底部内边距 22dp 避开手势条</td></tr>
+        <tr><td>热力图</td><td>13 列 × 3px 间距</td><td>每格正方形，按练习次数分 4 级深度</td></tr>
+        <tr><td>行高（正文）</td><td>16sp / 行高 1.5</td><td>短语 hero 用 24sp / 1.3，避免长句换行后过散</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+<script>
+const root = document.documentElement;
+const bd = document.getElementById('btn-dark');
+const bl = document.getElementById('btn-light');
+function setTheme(t){
+  root.setAttribute('data-theme', t);
+  bd.setAttribute('aria-pressed', t === 'dark');
+  bl.setAttribute('aria-pressed', t === 'light');
+}
+bd.addEventListener('click', () => setTheme('dark'));
+bl.addEventListener('click', () => setTheme('light'));
+setTheme('dark');
+</script>
+</body>
+</html>

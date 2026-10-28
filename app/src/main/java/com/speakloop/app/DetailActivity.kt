@@ -616,7 +616,7 @@ class DetailActivity : AppCompatActivity() {
             }
         }
         box.addView(
-            Ui.text(this, line.speaker, 10f, if (isB) Ui.ACCENT else Ui.MUTED, true)
+            Ui.text(this, line.speaker, Ui.T.CAP, if (isB) Ui.ACCENT else Ui.MUTED, true)
                 .apply { letterSpacing = 0.2f }
         )
         val en = Ui.text(this, line.text, 14f, Ui.FG).apply {

@@ -77,26 +77,37 @@ object Ui {
         Color.parseColor(if (dark) darkColor else lightColor)
 
     /** 页面底色：比卡片更深一档，卡片靠这层差浮起来（浅色下尤其靠它）。 */
-    val BG: Int get() = pick("#F1F3F6", "#0B0F14")
+    val BG: Int get() = pick("#F4F5F7", "#0B0F14")
 
     /** 卡片 / 对话框。 */
     val SURFACE: Int get() = pick("#FFFFFF", "#141C26")
 
     /** 卡片上的次级块：输入框、图标按钮、标签。 */
-    val SURFACE_2: Int get() = pick("#F3F5F8", "#1C2632")
+    val SURFACE_2: Int get() = pick("#F4F6F9", "#1C2632")
 
     /** 情景对话里 B 说话人的气泡。 */
     val BUBBLE: Int get() = pick("#EEF4FF", "#1B2C48")
 
     /** 1dp 描边。浅色下没有它卡片会糊在底色里。 */
-    val STROKE: Int get() = pick("#E8EBEF", "#253140")
+    val STROKE: Int get() = pick("#E6E9EE", "#253140")
 
     val FG: Int get() = pick("#0F1115", "#E9EFF6")
-    val DIM: Int get() = pick("#8A8F98", "#94A3B4")
-    val MUTED: Int get() = pick("#A8AEB8", "#5F6E7E")
 
-    /** 强调色：浅色下用紫，深色下用蓝，都是「选中 / 可点」的意思。 */
-    val ACCENT: Int get() = pick("#5B54D6", "#5B8CFF")
+    /**
+     * 次要文字。对比度按 WCAG AA 校过：
+     * 浅色 #4A5160 对白底 7.6:1，深色 #A8B4C4 对 #141C26 约 7.8:1。
+     * 原来用的 #8A8F98 只有 3.4:1，户外根本看不清。
+     */
+    val DIM: Int get() = pick("#4A5160", "#A8B4C4")
+
+    /**
+     * 辅助文字。浅色 #6E7686 对白底 4.9:1，深色 #7E8A9A 对卡片约 4.6:1，
+     * 都刚好过 AA 的 4.5:1 线。再浅一档就没有阅读价值了，通勤场景更不行。
+     */
+    val MUTED: Int get() = pick("#6E7686", "#7E8A9A")
+
+    /** 强调色：只表示「可点 / 选中 / 导航」，不再兼职表示播放状态。 */
+    val ACCENT: Int get() = pick("#5B54D6", "#7C9BFF")
 
     /** 强调色底上的文字。 */
     val ON_ACCENT: Int get() = pick("#FFFFFF", "#07101F")
@@ -108,11 +119,20 @@ object Ui {
     val SOLID: Int get() = pick("#16181D", "#E9EFF6")
     val ON_SOLID: Int get() = pick("#FFFFFF", "#0B0F14")
 
-    /** 播放到哪句的高亮色，和强调色分开，免得和「可点」混淆。 */
-    val HILITE: Int get() = pick("#2563EB", "#8AB4FF")
+    /** 绿色实心按钮上的文字。绿底配近黑字，对比度 5.7:1 以上。 */
+    val ON_PLAY: Int get() = Color.parseColor("#04140D")
+
+    /**
+     * 播放到哪一句的高亮色。
+     *
+     * 以前这里单独用一个蓝 #2563EB，和「可点」的强调色撞在一起 —— 骑车时扫一眼，
+     * 分不清这行是「能点」还是「正在读」。现在把它并到绿色：绿色专管播放/跟读/达标，
+     * 蓝色专管可交互，两种语义彻底分开。
+     */
+    val HILITE: Int get() = GOOD
 
     val GOOD: Int get() = pick("#12B76A", "#34D399")
-    val BAD: Int get() = pick("#E24B4A", "#FF7A7A")
+    val BAD: Int get() = pick("#D92D20", "#FF7A7A")
     val WARN: Int get() = pick("#BA7517", "#FBBF24")
 
     /** 绿色浅底，用于「已练 / 可用」这类状态标签。 */
@@ -124,6 +144,44 @@ object Ui {
 
     private val RIPPLE_SOFT: Int get() = if (dark) 0x30FFFFFF else 0x12000000
     private val RIPPLE_ON_SOLID: Int get() = if (dark) 0x50000000 else 0x33FFFFFF
+
+    // ---------- 字号 ----------
+
+    /**
+     * 只有五档。之前各页面散着用 9/10/11/12/13/14/15/16/20/25 十种字号，
+     * 层级是平的；而且 9sp、10sp 在户外强光下等于不可读。
+     * 11sp 是下限，正文主档 16sp，靠 20/28 拉开卡片标题和页面标题。
+     */
+    object T {
+        /** 辅助信息：计数、提示、标签 */
+        const val CAP = 11f
+        /** 次要正文：释义、说明 */
+        const val SUB = 13f
+        /** 主正文：短语、例句、设置项 */
+        const val BODY = 16f
+        /** 卡片标题 / 大数字 */
+        const val TITLE = 20f
+        /** 页面标题 */
+        const val H1 = 28f
+    }
+
+    // ---------- 圆角与间距 ----------
+
+    /** 小元素：徽标、输入框 */
+    const val R_S = 8
+    /** 列表卡 */
+    const val R_M = 12
+    /** 内容卡、弹层 */
+    const val R_L = 20
+
+    /** 8pt 栅格的半档，只用于图标与文字之间的贴合微调 */
+    const val SP_1 = 4
+    const val SP_2 = 8
+    const val SP_3 = 12
+    const val SP_4 = 16
+    const val SP_5 = 20
+    const val SP_6 = 24
+    const val SP_8 = 32
 
     // ---------- 尺寸 ----------
 
@@ -186,9 +244,9 @@ object Ui {
 
     /** 小圆角标签，用来显示「播过 3 次」「4 句对话」这类元信息。 */
     fun chip(c: Context, label: String, fg: Int = MUTED, fill: Int = SURFACE_2): TextView =
-        text(c, label, 10f, fg).apply {
+        text(c, label, T.CAP, fg).apply {
             setPadding(dp(c, 9), dp(c, 4), dp(c, 9), dp(c, 4))
-            background = shape(c, 9, fill)
+            background = shape(c, R_S, fill)
         }
 
     /** 可点的胶囊标签，选中时换成强调色浅底 + 强调色文字。 */
@@ -197,9 +255,12 @@ object Ui {
         label: String,
         on: Boolean,
         onClick: (() -> Unit)? = null
-    ): TextView = text(c, label, 11f, if (on) ACCENT else DIM, on).apply {
-        setPadding(dp(c, 12), dp(c, 7), dp(c, 12), dp(c, 7))
-        background = ripple(c, 11, if (on) ACCENT_SOFT else SURFACE_2, 0, STROKE)
+    ): TextView = text(c, label, T.SUB, if (on) ACCENT else DIM, on).apply {
+        gravity = Gravity.CENTER
+        // 32dp 是这枚胶囊的触摸下限，再小戴手套点不准
+        minHeight = dp(c, 32)
+        setPadding(dp(c, 14), dp(c, 7), dp(c, 14), dp(c, 7))
+        background = ripple(c, 16, if (on) ACCENT_SOFT else SURFACE_2, 0, STROKE)
         if (onClick != null) {
             isClickable = true
             setOnClickListener { onClick() }
@@ -264,25 +325,27 @@ object Ui {
                 }
             })
         }
-        row.addView(text(c, label, 14f, fg, true))
+        row.addView(text(c, label, T.BODY, fg, true))
         return row
     }
 
     /** 小节标题：一行小字，左边不留竖线（浅色卡片风里竖线显得重）。 */
     fun sectionLabel(c: Context, label: String): TextView =
-        text(c, label, 13f, FG, true)
+        text(c, label, T.SUB, FG, true)
 
     /** 卡片里的一行「左标题 + 右值」，用于设置页。 */
     fun rowKV(c: Context, k: String, v: String): LinearLayout =
         LinearLayout(c).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(c, 16), dp(c, 13), dp(c, 16), dp(c, 13))
+            // 52dp 是设置行的触摸下限，跟原型里的规格一致
+            minimumHeight = dp(c, 52)
+            setPadding(dp(c, 2), dp(c, 12), dp(c, 2), dp(c, 12))
             addView(
-                text(c, k, 13f, FG),
+                text(c, k, T.BODY, FG),
                 LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             )
-            addView(text(c, v, 12f, DIM))
+            addView(text(c, v, T.SUB, MUTED))
         }
 
     /** 1dp 分隔线，左边缩进对齐文字起始位置。 */
