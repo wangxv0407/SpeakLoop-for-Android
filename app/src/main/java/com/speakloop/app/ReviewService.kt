@@ -123,7 +123,8 @@ class ReviewService : Service(), TextToSpeech.OnInitListener {
 
     private var session: MediaSession? = null
 
-    private val tick = Runnable {
+    /** 显式标类型：这个 Runnable 会 postDelayed 自己，不写类型编译器会卡在递归推断上。 */
+    private val tick: Runnable = Runnable {
         if (!running || paused || !inGap) return@Runnable
         gapRemain -= TICK_MS
         if (gapRemain <= 0L) {
@@ -210,6 +211,7 @@ class ReviewService : Service(), TextToSpeech.OnInitListener {
         loop = prefs.getBoolean("loop", false)
         val followGap = prefs.getBoolean("followGap", true)
         val longGap = if (followGap) 4000L else 500L
+        val rateScale = prefs.getFloat("rate", 1f)
 
         val dayText = intent?.getStringExtra(EXTRA_DAY).orEmpty()
         val day = try {
@@ -259,7 +261,7 @@ class ReviewService : Service(), TextToSpeech.OnInitListener {
         }
 
         phraseTotal = queue.size
-        steps = buildSteps(queue, longGap, phrasesOnly)
+        steps = buildSteps(queue, longGap, phrasesOnly, rateScale)
         index = 0
         marked.clear()
         running = true
@@ -276,21 +278,24 @@ class ReviewService : Service(), TextToSpeech.OnInitListener {
     private fun buildSteps(
         phrases: List<Phrase>,
         longGap: Long,
-        phrasesOnly: Boolean
+        phrasesOnly: Boolean,
+        rateScale: Float
     ): List<Step> {
         val out = ArrayList<Step>()
+        // 每个基准倍速都乘上设置里的全局语速：基准值之间的相对快慢保持不变
+        fun k(r: Float) = (r * rateScale).coerceIn(0.3f, 2.0f)
         phrases.forEachIndexed { i, p ->
-            out.add(Step(p.phrase, p.meaning, 0.75f, 800L, i, p.id, p.phrase))
-            out.add(Step(p.phrase, p.meaning, 1.0f, longGap, i, p.id, p.phrase))
+            out.add(Step(p.phrase, p.meaning, k(0.75f), 800L, i, p.id, p.phrase))
+            out.add(Step(p.phrase, p.meaning, k(1.0f), longGap, i, p.id, p.phrase))
             if (phrasesOnly) return@forEachIndexed
             for (ex in p.examples) {
-                out.add(Step(ex.text, ex.cn, 0.85f, longGap, i, p.id, p.phrase))
+                out.add(Step(ex.text, ex.cn, k(0.85f), longGap, i, p.id, p.phrase))
             }
             for (line in p.dialogue) {
                 val rate = if (line.speaker == "B") 0.9f else 0.95f
-                out.add(Step(line.text, line.cn, rate, 900L, i, p.id, p.phrase))
+                out.add(Step(line.text, line.cn, k(rate), 900L, i, p.id, p.phrase))
             }
-            out.add(Step(p.phrase, p.meaning, 1.0f, 1200L, i, p.id, p.phrase))
+            out.add(Step(p.phrase, p.meaning, k(1.0f), 1200L, i, p.id, p.phrase))
         }
         return out
     }

@@ -1,5 +1,6 @@
 package com.speakloop.app
 
+import android.app.Activity
 import android.content.Context
 import android.content.res.ColorStateList
 import android.content.res.Configuration
@@ -10,6 +11,7 @@ import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.View
 import android.view.View
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -47,6 +49,24 @@ object Ui {
             else -> (c.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
                 Configuration.UI_MODE_NIGHT_YES
         }
+    }
+
+    /**
+     * 状态栏、导航栏跟着主题走。
+     * 不写在 themes.xml 里，因为那一份在运行时不知道用户选了浅色还是深色。
+     */
+    fun decorateWindow(a: Activity) {
+        val w = a.window
+        w.statusBarColor = BG
+        w.navigationBarColor = BG
+        @Suppress("DEPRECATION")
+        var flags = View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+        if (!dark) {
+            flags = flags or View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+        }
+        @Suppress("DEPRECATION")
+        w.decorView.systemUiVisibility = flags
+        w.decorView.setBackgroundColor(BG)
     }
 
     // ---------- 调色板 ----------

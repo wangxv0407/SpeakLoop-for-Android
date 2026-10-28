@@ -1,15 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!--
+      这里的颜色只是「窗口刚创建、代码还没跑起来」那一瞬间的底，
+      真正的配色由 Ui.applyTheme + Ui.decorateWindow 在运行时决定。
+      文字色必须是深色：AlertDialog 用的是 textColorPrimary，
+      写成浅色的话在浅色主题下对话框里的字会看不见。
+    -->
     <style name="AppTheme" parent="Theme.AppCompat.NoActionBar">
-        <item name="android:windowBackground">#0B0F14</item>
-        <item name="android:statusBarColor">#0B0F14</item>
-        <item name="android:navigationBarColor">#0B0F14</item>
-        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowBackground">#F1F3F6</item>
         <item name="android:forceDarkAllowed">false</item>
-        <item name="android:textColorPrimary">#E9EFF6</item>
-        <item name="android:textColorSecondary">#94A3B4</item>
-        <item name="colorAccent">#5B8CFF</item>
-        <item name="android:colorAccent">#5B8CFF</item>
-        <item name="colorControlActivated">#5B8CFF</item>
+        <item name="android:textColorPrimary">#0F1115</item>
+        <item name="android:textColorSecondary">#8A8F98</item>
+        <item name="colorAccent">#5B54D6</item>
+        <item name="android:colorAccent">#5B54D6</item>
+        <item name="colorControlActivated">#5B54D6</item>
     </style>
 </resources>

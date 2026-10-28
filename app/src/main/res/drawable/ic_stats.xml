@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 底栏「统计」：三根高低不同的柱子 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M5,13h2.6v7H5zM10.7,7h2.6v13h-2.6zM16.4,10h2.6v10h-2.6z" />
+</vector>

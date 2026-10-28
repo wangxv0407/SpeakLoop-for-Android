@@ -224,8 +224,8 @@ class Db(context: Context) :
             "SELECT p.phrase, COUNT(l.id) AS n FROM play_log l " +
                 "JOIN phrase p ON p.id = l.phrase_id " +
                 "WHERE l.day >= ? AND l.day <= ? GROUP BY l.phrase_id " +
-                "ORDER BY n DESC, p.phrase ASC LIMIT ?",
-            arrayOf(fromDay, toDay, limit.toString())
+                "ORDER BY n DESC, p.phrase ASC LIMIT $limit",
+            arrayOf(fromDay, toDay)
         )
         try {
             while (cursor.moveToNext()) out.add(cursor.getString(0) to cursor.getInt(1))
