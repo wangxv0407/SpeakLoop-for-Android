@@ -60,6 +60,7 @@ git push -u origin main
 | v1.8 | 修复习页五个问题：语速/日期选择框白字（对话框列表项套 ForegroundColorSpan）、**读完一句就停**（TTS 引擎同步回调 onInit 导致进度监听没挂上，另加 speak 返回值兜底 + 推进与倒数解耦）、播放中加「结束」按钮、蓝牙耳机可控（MediaStyle + sessionToken + AudioFocus）、切 tab 空白（ScrollView 旧 scrollY 越界）；顺带加 PARTIAL_WAKE_LOCK，锁屏留白不再卡住 |
 | v1.9 | 复习页下方**摊开这条短语要读的全部行**（短语两遍 / 例句 / 对话 / 收尾），左侧色条 + 文字高亮当前行，留白时整行转绿提示「该你了」；**修例句读完不继续**（引擎在构造函数里同步回调 onInit 导致监听没挂上 → attachEngine 幂等化并在 onCreate 补挂；onDone/onError 统一回主线程；倒数 tick 到点兜底推进，gapDone 消息丢了也不会死等）；去掉字号重叠的双行状态文字，合并为一行；**离开复习页自动暂停**并 toast 提示，不再一边翻短语库一边后台朗读 |
 | v1.9.1 | 复习页底部加 **上一句 / 下一句**（暂停两侧），暂停时跳句只挪高亮位置不出声；**修通知栏「暂停 / 下一句」消失**：`addAction` 的图标传了 `0`，华为等 ROM 把图标为 0 的 action 整条丢弃，换成系统自带媒体图标；同时给 `PlaybackState.actions` 补 `ACTION_SKIP_TO_PREVIOUS` 并实现 `onSkipToPrevious`，Android 13+ 的系统媒体控件才有「上一个」；上/下/暂停/停止抽成 `SESSION_ACTIONS` 常量，避免两处 setActions 以后改漏一处 |
+| v1.9.2 | 「上一条 / 下一条」改成**按整条短语跳**（原来按单句跳，要连按七八下才换得动一个词）。`skipPhrase()` 用短语序号定位到下一条的第一个 Step，所以会从慢速版重新开始；已是最后一条再按「下一条」原地不动，避免误触结束整轮；按钮和通知栏文案同步改成「上一条」「下一条」，复习页底部提示改为本条内的句子进度 |
 
 Artifacts 里永远只有一份 `speakloop-debug-apk.zip`，每次构建覆盖成最新那次的结果，
 认准是哪次构建：进去看标题和提交信息就知道。
