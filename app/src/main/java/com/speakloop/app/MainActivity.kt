@@ -308,9 +308,9 @@ class MainActivity : AppCompatActivity() {
             var error: String? = null
             try {
                 enriched = Llm.enrich(
-                    prefs.getString("baseUrl", "")!!,
-                    prefs.getString("apiKey", "")!!,
-                    prefs.getString("model", "")!!,
+                    prefs.getString("baseUrl", "").orEmpty().ifBlank { Llm.DEFAULT_BASE },
+                    prefs.getString("apiKey", "").orEmpty(),
+                    prefs.getString("model", "").orEmpty().ifBlank { "agnes-2.5-flash" },
                     text
                 )
             } catch (e: Exception) {

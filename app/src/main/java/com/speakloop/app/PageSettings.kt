@@ -219,7 +219,11 @@ class PageSettings(private val host: MainActivity) {
         val c = card()
 
         c.addView(W.label(host, "Base URL（只填到 /v1）").apply { setPadding(0, 0, 0, dp(6)) })
-        baseUrl = W.input(host, "https://apihub.agnes-ai.com/v1", prefs.getString("baseUrl", "")!!)
+        baseUrl = W.input(
+            host,
+            Llm.DEFAULT_BASE,
+            prefs.getString("baseUrl", "").orEmpty().ifBlank { Llm.DEFAULT_BASE }
+        )
         c.addView(baseUrl)
 
         c.addView(W.label(host, "API Key"))
@@ -256,10 +260,7 @@ class PageSettings(private val host: MainActivity) {
 
     private fun saveAiQuietly() {
         prefs.edit()
-            .putString(
-                "baseUrl",
-                baseUrl.text.toString().trim().ifBlank { "https://apihub.agnes-ai.com/v1" }
-            )
+            .putString("baseUrl", baseUrl.text.toString().trim().ifBlank { Llm.DEFAULT_BASE })
             .putString("apiKey", apiKey.text.toString().trim())
             .putString("model", model.text.toString().trim().ifBlank { "agnes-2.5-flash" })
             .apply()
@@ -267,10 +268,7 @@ class PageSettings(private val host: MainActivity) {
 
     private fun saveAi() {
         prefs.edit()
-            .putString(
-                "baseUrl",
-                baseUrl.text.toString().trim().ifBlank { "https://apihub.agnes-ai.com/v1" }
-            )
+            .putString("baseUrl", baseUrl.text.toString().trim().ifBlank { Llm.DEFAULT_BASE })
             .putString("apiKey", apiKey.text.toString().trim())
             .putString("model", model.text.toString().trim().ifBlank { "agnes-2.5-flash" })
             .apply()
@@ -278,7 +276,7 @@ class PageSettings(private val host: MainActivity) {
     }
 
     private fun testAi() {
-        val bu = baseUrl.text.toString().trim()
+        val bu = baseUrl.text.toString().trim().ifBlank { Llm.DEFAULT_BASE }
         val k = apiKey.text.toString().trim()
         val m = model.text.toString().trim()
         if (bu.isBlank() || k.isBlank() || m.isBlank()) {

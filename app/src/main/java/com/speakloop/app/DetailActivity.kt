@@ -39,15 +39,26 @@ import kotlin.concurrent.thread
 /**
  * 短语详情页。从列表点进来，单独占一屏。
  *
- * 跟读**优先走系统语音输入界面**（和添加短语时的「说一遍」同一条路）：
- * 应用内的 SpeechRecognizer 依赖 Google 语音服务，华为等国产 ROM 上基本不可用。
- * 系统界面由识别器 App 自己录音，也不需要我们申请麦克风权限。
- * 只有在系统没有语音输入、但应用内识别服务存在时，才退回应用内并申请权限。
+ * 跟读按三级降级，任何一级都不会让按钮「点了没反应」：
+ * 1. 系统语音输入界面（ACTION_RECOGNIZE_SPEECH）：不申请权限、不依赖 Google 服务；
+ * 2. 应用内 SpeechRecognizer：两条路都走不通时的次选，华为等机型常在这里假可用——
+ *    能创建、能 startListening，但一个回调都不来，所以外面套了个 2.2 秒的看门狗；
+ * 3. 录音对比：识别彻底不可用时直接开录音，用户自己回放和原声对比。
+ *
+ * 界面反馈统一走 [showStatus]，改文案的同时把结果卡滚进视野——只在下面悄悄改字，
+ * 手机上一屏看不到，表现出来就是「点了没反应」。
  */
 class DetailActivity : AppCompatActivity() {
 
     companion object {
         const val EXTRA_ID = "phraseId"
+
+        /**
+         * 本次进程里已经自动尝试过翻译的短语。
+         * recreate() 会造新的 Activity 实例，普通成员变量挡不住重复触发，
+         * 模型又一直返回空串时就会无限「补全 → 重建 → 再补全」。
+         */
+        private val autoTried = java.util.Collections.synchronizedSet(HashSet<Long>())
     }
 
     /** 顺序朗读的一步：读什么、多快、读完留多久、读的时候高亮哪个控件。 */
@@ -61,10 +72,18 @@ class DetailActivity : AppCompatActivity() {
     private lateinit var prefs: SharedPreferences
     private lateinit var phrase: Phrase
 
+    private lateinit var scroll: ScrollView
+    private lateinit var resultCard: View
     private lateinit var resultView: TextView
+    private lateinit var voiceHint: TextView
+    private lateinit var translatePillView: TextView
     private lateinit var phraseAnchor: TextView
     private lateinit var playIcon: ImageView
     private lateinit var playLabel: TextView
+
+    /** 识别服务假可用时（华为等机型）用来兜底：等这么久没有任何回调就换方案 */
+    private var voiceWatchdog: Runnable? = null
+    private var voiceResponsive = false
 
     private val exampleAnchors = ArrayList<TextView>()
     private val dialogueAnchors = ArrayList<TextView>()
@@ -97,7 +116,11 @@ class DetailActivity : AppCompatActivity() {
         if (granted) {
             listenInApp()
         } else {
-            showVoiceDiagnostic("没有麦克风权限")
+            showStatus(
+                "没有麦克风权限，识别和录音都用不了。\n" +
+                    "到「设置 → 应用 → SpeakLoop → 权限」里打开麦克风再试。",
+                Ui.WARN
+            )
         }
     }
 
@@ -117,8 +140,11 @@ class DetailActivity : AppCompatActivity() {
         if (result.resultCode == RESULT_OK && !heard.isNullOrBlank()) {
             showDiff(heard)
         } else {
-            resultView.setTextColor(Ui.WARN)
-            resultView.text = "系统语音输入没返回内容，再点一次「跟读」"
+            showStatus(
+                "系统语音输入没有返回识别内容（可能被取消了，或这台机器没装识别引擎）。\n" +
+                    "可以直接点下面的「录一遍」，录完自己回放对比。",
+                Ui.WARN
+            )
         }
     }
 
@@ -147,6 +173,7 @@ class DetailActivity : AppCompatActivity() {
         Ui.decorateWindow(this)
         memo = VoiceMemo(this)
         refreshMemo()
+        maybeAutoTranslate()
 
         tts = TextToSpeech(this) { status ->
             ttsReady = status == TextToSpeech.SUCCESS
@@ -175,6 +202,7 @@ class DetailActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        cancelVoiceWatchdog()
         memo?.release()
         memo = null
         playing = false
@@ -213,6 +241,7 @@ class DetailActivity : AppCompatActivity() {
             isVerticalScrollBarEnabled = false
             clipToPadding = false
         }
+        this.scroll = scroll
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(18), dp(2), dp(18), dp(36))
@@ -225,7 +254,9 @@ class DetailActivity : AppCompatActivity() {
 
         content.addView(buildHero())
         content.addView(buildActions(), marginTop(dp(12)))
-        content.addView(buildResultCard(), marginTop(dp(14)))
+        val res = buildResultCard()
+        resultCard = res
+        content.addView(res, marginTop(dp(14)))
 
         if (phrase.examples.isNotEmpty()) {
             content.addView(Ui.sectionLabel(this, "例句"), marginTop(dp(26)))
@@ -296,7 +327,7 @@ class DetailActivity : AppCompatActivity() {
         }
         card.addView(chips)
 
-        if (needsTranslation() && hasApiKey()) {
+        if (needsTranslation()) {
             card.addView(
                 translatePill(),
                 LinearLayout.LayoutParams(
@@ -331,6 +362,8 @@ class DetailActivity : AppCompatActivity() {
     }
 
     private fun buildActions(): View {
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         row.addView(
             buildPlayButton(),
@@ -342,7 +375,23 @@ class DetailActivity : AppCompatActivity() {
                 leftMargin = dp(10)
             }
         )
-        return row
+        col.addView(row)
+
+        // 跟读到底会走哪条路，先写在按钮下面，别让用户点完猜发生了什么
+        voiceHint = Ui.text(this, voiceModeText(), 11f, Ui.MUTED).apply {
+            setPadding(dp(2), dp(10), dp(2), 0)
+            setLineSpacing(dp(3).toFloat(), 1f)
+        }
+        col.addView(voiceHint)
+        return col
+    }
+
+    private fun voiceModeText(): String = when {
+        hasVoiceUi() -> "跟读会打开系统语音输入界面，识别完自动逐词比对打分"
+        SpeechRecognizer.isRecognitionAvailable(this) ->
+            "跟读会用系统识别服务听一遍，识别完自动逐词比对打分"
+
+        else -> "这台手机没有语音识别服务，跟读＝录一遍，再点「听录音」自己对比"
     }
 
     private fun buildResultCard(): View {
@@ -354,7 +403,8 @@ class DetailActivity : AppCompatActivity() {
         card.addView(Ui.sectionLabel(this, "跟读结果"))
         resultView = Ui.text(
             this,
-            "点上面的「跟读」说一遍。\n漏读的标红加删除线，多读的标黄。",
+            "点上面的「跟读」说一遍，识别完这里会逐词标出漏读和多读。\n" +
+                "手机没有语音识别时，跟读会改成录音，「听录音」和原声对比。",
             15f,
             Ui.MUTED
         ).apply {
@@ -396,6 +446,7 @@ class DetailActivity : AppCompatActivity() {
         if (memo?.recording == true) {
             memo?.stopRecording()
             memoRecord.text = "录一遍"
+            memoRecord.setTextColor(Ui.FG)
             toast("已保存，点「听录音」回放")
             refreshMemo()
             return
@@ -414,6 +465,8 @@ class DetailActivity : AppCompatActivity() {
         tts?.stop()
         if (memo?.start(phrase.id) == true) {
             memoRecord.text = "停止录音"
+            memoRecord.setTextColor(Ui.BAD)
+            toast("正在录音，读完点「停止录音」")
         } else {
             toast("录音启动失败，可能有别的应用占着麦克风")
         }
@@ -585,13 +638,42 @@ class DetailActivity : AppCompatActivity() {
         return row
     }
 
-    private fun translatePill(): TextView =
-        Ui.text(this, "＋ 补全中文释义", 12f, Ui.ACCENT, true).apply {
+    /**
+     * 例句 / 对话缺中文时的入口。
+     * 没配 AI 也要显示出来——否则用户只看到一堆英文，根本不知道还能补。
+     */
+    private fun translatePill(): TextView {
+        val label = if (hasApiKey()) "＋ 补全中文释义" else "例句还缺中文 · 点这里看怎么开"
+        val color = if (hasApiKey()) Ui.ACCENT else Ui.WARN
+        translatePillView = Ui.text(this, label, 12f, color, true).apply {
             setPadding(dp(12), dp(8), dp(12), dp(8))
             background = Ui.ripple(this@DetailActivity, 12, Ui.SURFACE_2, 1, Ui.STROKE)
             isClickable = true
-            setOnClickListener { translateNow() }
+            setOnClickListener { onTranslateClick() }
         }
+        return translatePillView
+    }
+
+    private fun onTranslateClick() {
+        if (!hasApiKey()) {
+            val dialog = AlertDialog.Builder(this)
+                .setTitle("中文释义要靠 AI 翻译")
+                .setMessage(
+                    "例句和情景对话的中文是调用 AI 现翻的，需要先填一个 API Key。\n\n" +
+                        "底部「设置」→「AI 补全」：\n" +
+                        "· Base URL：${Llm.DEFAULT_BASE}\n" +
+                        "· API Key：你的 sk- 开头密钥\n" +
+                        "· 模型：agnes-2.5-flash\n\n" +
+                        "填完点「测试连接」确认通了，再回到这一页就会自动补上中文。"
+                )
+                .setPositiveButton("知道了", null)
+                .create()
+            dialog.show()
+            Ui.roundDialog(dialog, this)
+            return
+        }
+        translateNow(auto = false)
+    }
 
     private fun dayOf(ms: Long): String =
         SimpleDateFormat("M月d日添加", Locale.CHINA).format(Date(ms))
@@ -694,19 +776,41 @@ class DetailActivity : AppCompatActivity() {
     private fun hasVoiceUi(): Boolean =
         packageManager.queryIntentActivities(voiceIntent(""), 0).isNotEmpty()
 
+    /**
+     * 所有跟读反馈都走这里：改文案 + 把结果卡滚进视野。
+     *
+     * 结果卡在按钮下方的折叠区域里，之前只改文字不滚动，手机上一屏看不到，
+     * 表现出来就是「点了没反应」。
+     */
+    private fun showStatus(text: CharSequence, color: Int) {
+        if (!::resultView.isInitialized) return
+        resultView.setTextColor(color)
+        resultView.text = text
+        if (!::resultCard.isInitialized) return
+        resultCard.post {
+            if (!::scroll.isInitialized) return@post
+            scroll.smoothScrollTo(0, (resultCard.top - dp(8)).coerceAtLeast(0))
+        }
+    }
+
     private fun onMicClick() {
         stopPlay()
         tts?.stop()
 
         // 首选系统语音输入界面：不申请权限、不依赖 Google 服务
         if (hasVoiceUi()) {
-            resultView.setTextColor(Ui.DIM)
-            resultView.text = "在弹出的语音输入界面里说一遍，说完等一下"
+            showStatus("正在打开系统语音输入界面，在里面说一遍……", Ui.DIM)
             try {
                 voiceLauncher.launch(voiceIntent("跟读：${phrase.phrase}"))
                 return
             } catch (e: ActivityNotFoundException) {
-                // 说能处理却没有界面，继续往下试应用内识别
+                // 系统说能处理、实际却没界面，继续往下试
+                showStatus("系统语音输入打不开，改用应用内识别……", Ui.WARN)
+            } catch (e: Exception) {
+                showStatus(
+                    "系统语音输入打不开（${e.javaClass.simpleName}），改用应用内识别……",
+                    Ui.WARN
+                )
             }
         }
 
@@ -714,6 +818,7 @@ class DetailActivity : AppCompatActivity() {
             if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) !=
                 PackageManager.PERMISSION_GRANTED
             ) {
+                showStatus("跟读需要麦克风权限，请在弹窗里点「允许」", Ui.DIM)
                 micPermission.launch(Manifest.permission.RECORD_AUDIO)
             } else {
                 listenInApp()
@@ -721,41 +826,99 @@ class DetailActivity : AppCompatActivity() {
             return
         }
 
-        showVoiceDiagnostic("这台手机没有可用的语音识别服务")
+        // 两条路都没有：直接进录音对比，绝不让按钮点了没反应
+        showVoiceDiagnostic("这台手机没有语音识别服务")
+        beginRecordFallback()
+    }
+
+    /** 识别不可用时的兜底：录一遍，让用户自己和原声对比。 */
+    private fun beginRecordFallback() {
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            recordPermission.launch(Manifest.permission.RECORD_AUDIO)
+            return
+        }
+        startRecording()
+    }
+
+    /**
+     * 华为等机型上 `isRecognitionAvailable()` 会返回 true，但 startListening 之后
+     * 一个回调都不来（既没有 onReadyForSpeech，也没有 onError）。
+     * 之前的版本就卡死在这里：按钮点了、界面一点变化都没有。
+     * 这里加一个看门狗，等不到任何回应就判定不可用，直接换成录音对比。
+     */
+    private fun armVoiceWatchdog() {
+        cancelVoiceWatchdog()
+        val r = Runnable {
+            if (voiceResponsive) return@Runnable
+            recognizer?.destroy()
+            recognizer = null
+            showStatus(
+                "系统语音识别 2 秒没有任何响应（华为等机型常见），已改成「录音对比」：\n" +
+                    "读完点停止，再点下面的「听录音」和原声对比。",
+                Ui.WARN
+            )
+            beginRecordFallback()
+        }
+        voiceWatchdog = r
+        handler.postDelayed(r, 2200)
+    }
+
+    private fun cancelVoiceWatchdog() {
+        voiceWatchdog?.let { handler.removeCallbacks(it) }
+        voiceWatchdog = null
     }
 
     private fun listenInApp() {
         tts?.stop()
         recognizer?.destroy()
 
+        voiceResponsive = false
+        showStatus("正在启动语音识别……（2 秒没反应会自动改成录音对比）", Ui.DIM)
+        armVoiceWatchdog()
+
         val r = SpeechRecognizer.createSpeechRecognizer(this)
         recognizer = r
         r.setRecognitionListener(object : RecognitionListener {
             override fun onReadyForSpeech(params: Bundle?) {
+                voiceResponsive = true
+                cancelVoiceWatchdog()
                 resultView.setTextColor(Ui.DIM)
                 resultView.text = "在听……说完停一下"
             }
 
-            override fun onBeginningOfSpeech() {}
+            override fun onBeginningOfSpeech() {
+                voiceResponsive = true
+                cancelVoiceWatchdog()
+            }
+
             override fun onRmsChanged(rmsdB: Float) {}
+
             override fun onBufferReceived(buffer: ByteArray?) {}
 
             override fun onEndOfSpeech() {
+                voiceResponsive = true
+                cancelVoiceWatchdog()
                 resultView.text = "识别中……"
             }
 
             override fun onError(error: Int) {
+                voiceResponsive = true
+                cancelVoiceWatchdog()
                 resultView.setTextColor(Ui.WARN)
                 resultView.text = buildString {
                     append("应用内识别失败（错误码 ").append(error).append("）\n")
                     append(errorHint(error))
-                    append("\n再点一次「跟读」重试。")
+                    append("\n再点一次「跟读」重试，或点下面「录一遍」自己对比。")
                 }
                 r.destroy()
                 if (recognizer === r) recognizer = null
             }
 
             override fun onResults(results: Bundle?) {
+                voiceResponsive = true
+                cancelVoiceWatchdog()
                 val heard = results
                     ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                     ?.firstOrNull()
@@ -777,7 +940,16 @@ class DetailActivity : AppCompatActivity() {
         val intent = voiceIntent("说一遍这句话").apply {
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
         }
-        r.startListening(intent)
+        try {
+            r.startListening(intent)
+        } catch (e: Exception) {
+            cancelVoiceWatchdog()
+            showStatus(
+                "识别服务启动失败（${e.javaClass.simpleName}），已改成「录音对比」。",
+                Ui.WARN
+            )
+            beginRecordFallback()
+        }
     }
 
     private fun errorHint(code: Int): String = when (code) {
@@ -796,20 +968,23 @@ class DetailActivity : AppCompatActivity() {
 
     /** 实在不行就把现场情况摊开给人看，比只说「失败」有用。 */
     private fun showVoiceDiagnostic(reason: String) {
-        resultView.setTextColor(Ui.WARN)
-        resultView.text = buildString {
-            append(reason).append('\n')
-            append("系统语音输入界面：").append(if (hasVoiceUi()) "有" else "没有").append('\n')
-            append("应用内识别服务：")
-            append(if (SpeechRecognizer.isRecognitionAvailable(this@DetailActivity)) "有" else "没有")
-            append("\n\n语音识别需要系统里有可用的识别服务。")
-            append("可以在「设置 → 系统和更新 → 语言和输入法」里看语音输入是否启用。")
-        }
+        showStatus(
+            buildString {
+                append(reason).append('\n')
+                append("系统语音输入界面：").append(if (hasVoiceUi()) "有" else "没有").append('\n')
+                append("应用内识别服务：")
+                append(
+                    if (SpeechRecognizer.isRecognitionAvailable(this@DetailActivity)) "有（但没响应）"
+                    else "没有"
+                )
+                append("\n已切成「录音对比」：读完点停止，再点「听录音」和原声对比。")
+            },
+            Ui.WARN
+        )
     }
 
     private fun showDiff(heard: String) {
-        resultView.setTextColor(Ui.FG)
-        resultView.text = renderDiff(phrase.phrase, heard)
+        showStatus(renderDiff(phrase.phrase, heard), Ui.FG)
     }
 
     private fun renderDiff(ref: String, heard: String): CharSequence {
@@ -856,40 +1031,86 @@ class DetailActivity : AppCompatActivity() {
     private fun needsTranslation(): Boolean =
         phrase.examples.any { it.cn.isBlank() } || phrase.dialogue.any { it.cn.isBlank() }
 
-    private fun translateNow() {
-        toast("正在让 AI 补全中文……")
+    /**
+     * 进页面就自动补一次中文，不再让用户自己找那个小胶囊。
+     * 只在配了 Key 时才自动跑；同一条短语在本进程内只试一次，防止失败后反复重建。
+     */
+    private fun maybeAutoTranslate() {
+        if (!needsTranslation() || !hasApiKey()) return
+        if (!autoTried.add(phrase.id)) return
+        translateNow(auto = true)
+    }
+
+    /**
+     * 只补空着的中文，不重新生成句子。
+     *
+     * 早先这里走的是 Llm.enrich，会把整段例句 / 对话换掉——用户手改过的内容会被覆盖。
+     * 现在按顺序把缺中文的句子送出去翻译，再按原顺序填回空位，其余一个字不动。
+     *
+     * @param auto 进页面时自动跑的那次：失败不弹 toast，只把入口改成「点这里重试」
+     */
+    private fun translateNow(auto: Boolean) {
+        val pending = ArrayList<String>()
+        phrase.examples.forEach { if (it.cn.isBlank()) pending.add(it.text) }
+        phrase.dialogue.forEach { if (it.cn.isBlank()) pending.add(it.text) }
+        if (pending.isEmpty()) return
+
+        if (::translatePillView.isInitialized) {
+            translatePillView.text = "正在补全中文…"
+            translatePillView.setTextColor(Ui.DIM)
+        }
+        if (!auto) toast("正在让 AI 翻译这 ${pending.size} 句……")
+
         thread {
-            var got: Llm.Enriched? = null
+            var out: List<String>? = null
             var error: String? = null
             try {
-                got = Llm.enrich(
-                    prefs.getString("baseUrl", "")!!,
-                    prefs.getString("apiKey", "")!!,
-                    prefs.getString("model", "")!!,
-                    phrase.phrase
+                out = Llm.translateLines(
+                    prefs.getString("baseUrl", "").orEmpty().ifBlank { Llm.DEFAULT_BASE },
+                    prefs.getString("apiKey", "").orEmpty(),
+                    prefs.getString("model", "").orEmpty().ifBlank { "agnes-2.5-flash" },
+                    pending
                 )
             } catch (e: Exception) {
                 error = e.message ?: e.javaClass.simpleName
             }
 
             runOnUiThread {
-                val result = got
-                if (result == null) {
-                    toast("补全失败：${error ?: "未知原因"}")
+                val got = out
+                if (got == null) {
+                    if (::translatePillView.isInitialized) {
+                        translatePillView.text = "补全失败 · 点这里重试"
+                        translatePillView.setTextColor(Ui.BAD)
+                    }
+                    if (!auto) toast("补全失败：${error ?: "未知原因"}")
                     return@runOnUiThread
                 }
+
+                var k = 0
+                val newExamples = phrase.examples.map { e ->
+                    if (e.cn.isBlank()) e.copy(cn = got.getOrNull(k++).orEmpty()) else e
+                }
+                val newDialogue = phrase.dialogue.map { l ->
+                    if (l.cn.isBlank()) l.copy(cn = got.getOrNull(k++).orEmpty()) else l
+                }
+                val changed = newExamples != phrase.examples || newDialogue != phrase.dialogue
+                if (!changed) {
+                    // 模型什么都没给，别再 recreate 一遍，否则会无限循环
+                    if (::translatePillView.isInitialized) {
+                        translatePillView.text = "模型没返回中文 · 点这里重试"
+                        translatePillView.setTextColor(Ui.BAD)
+                    }
+                    toast("模型没返回中文，可能换了别的模型字段，点一下可以重试")
+                    return@runOnUiThread
+                }
+
                 val db = Db(this)
                 try {
-                    db.updateContent(
-                        phrase.id,
-                        result.meaning.ifBlank { phrase.meaning },
-                        result.examples,
-                        result.dialogue
-                    )
+                    db.updateContent(phrase.id, phrase.meaning, newExamples, newDialogue)
                 } finally {
                     db.close()
                 }
-                toast("已补全中文")
+                if (!auto) toast("已补全中文")
                 recreate()
             }
         }

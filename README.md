@@ -81,7 +81,7 @@ v1.2 起把一把固定的 debug keystore 放进仓库（`keystore/debug.keystor
 ### 设置 AI（v1.2 起可以自检）
 
 1. 点底栏 **设置 → AI 补全**
-2. **Base URL** 只填到 `/v1`，例如 `https://apihub.agnes-ai.com/v1`。
+2. **Base URL** 只填到 `/v1`，例如 `https://api.agnes-ai.cn/v1`。
    就算你不小心粘了整条 `.../v1/chat/completions`，App 也会自动剥掉，不用手改。
 3. **API Key** 填 `sk-` 开头那串
 4. **模型** 填 `agnes-2.5-flash`

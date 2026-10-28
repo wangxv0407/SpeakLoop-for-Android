@@ -11,6 +11,9 @@ import java.net.URL
  */
 object Llm {
 
+    /** 默认服务地址。只集中在这里定义一次，设置页和调用点都引用它。 */
+    const val DEFAULT_BASE = "https://api.agnes-ai.cn/v1"
+
     /** 调用失败。message 已经是给用户看的中文说明，带上了请求地址和排查建议。 */
     class ApiException(val status: Int, val endpoint: String, val body: String, msg: String) :
         Exception(msg)
@@ -30,6 +33,12 @@ Rules:
 - examples: exactly 2 natural sentences containing the phrase.
 - dialogue: exactly 4 lines alternating A and B, a realistic situation using the phrase.
 - t fields stay in English; c fields must be natural, colloquial Chinese translation of that same line (not a paraphrase of the phrase)."""
+
+    private const val TRANSLATE_SYSTEM =
+        """You translate English sentences into natural, colloquial Chinese for a Chinese learner.
+Return ONLY a compact JSON array of strings, no markdown, no explanation, no keys.
+The array must contain exactly one Chinese string per input sentence, in the same order.
+Never return an empty string; if a sentence is a fragment, translate it as a fragment."""
 
     /**
      * 把用户填的 Base URL 归一成完整的 chat/completions 地址。
@@ -89,6 +98,41 @@ Rules:
             )
         }
         return parse(content, endpoint)
+    }
+
+    /**
+     * 只翻译，不重新生成句子。
+     *
+     * 详情页里已经存在的例句 / 对话可能是用户手改过的，重新走 enrich 会把它们整段覆盖掉，
+     * 所以中文缺失时单独调一次翻译，按顺序把结果填回原来的空位。
+     */
+    fun translateLines(
+        baseUrl: String,
+        apiKey: String,
+        model: String,
+        lines: List<String>
+    ): List<String> {
+        if (lines.isEmpty()) return emptyList()
+        val endpoint = resolveEndpoint(baseUrl)
+
+        val messages = JSONArray()
+        messages.put(JSONObject().put("role", "system").put("content", TRANSLATE_SYSTEM))
+        messages.put(JSONObject().put("role", "user").put("content", JSONArray(lines).toString()))
+        val payload = JSONObject()
+            .put("model", model)
+            .put("temperature", 0.2)
+            .put("messages", messages)
+            .toString()
+
+        val body = post(endpoint, apiKey, payload)
+        val content = contentOf(body)
+        if (content.isBlank()) {
+            throw ApiException(
+                200, endpoint, body,
+                "模型返回了空内容。\n换个模型试试，或重试一次。"
+            )
+        }
+        return parseStringArray(content, endpoint, lines.size)
     }
 
     // ---------- 内部 ----------
@@ -223,4 +267,32 @@ Rules:
     /** 中文可能在 c，也可能是 cn / zh，模型不太稳定，都认。 */
     private fun pickCn(o: JSONObject): String =
         o.optString("c", "").ifBlank { o.optString("cn", "") }.ifBlank { o.optString("zh", "") }
+
+    /**
+     * 从模型回复里抠出字符串数组。有的模型会包成 {"translations":[...]}，
+     * 所以按第一个 [ 到最后一个 ] 截，比按顶层 JSONObject 解析宽容。
+     */
+    private fun parseStringArray(raw: String, endpoint: String, expect: Int): List<String> {
+        val start = raw.indexOf('[')
+        val end = raw.lastIndexOf(']')
+        if (start < 0 || end <= start) {
+            throw ApiException(
+                200, endpoint, raw,
+                "模型没有返回数组，无法解析。\n原始内容：${raw.take(200)}"
+            )
+        }
+        val arr = try {
+            JSONArray(raw.substring(start, end + 1))
+        } catch (e: Exception) {
+            throw ApiException(
+                200, endpoint, raw,
+                "模型返回的数组格式不对。\n原始内容：${raw.take(200)}"
+            )
+        }
+        val out = ArrayList<String>(expect)
+        for (i in 0 until expect) {
+            out.add(if (i < arr.length()) arr.optString(i, "").trim() else "")
+        }
+        return out
+    }
 }
