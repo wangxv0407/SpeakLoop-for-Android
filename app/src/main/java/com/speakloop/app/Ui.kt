@@ -302,7 +302,8 @@ object Ui {
     fun roundDialog(dialog: AlertDialog, c: Context, radiusDp: Int = 24) {
         dialog.window?.setBackgroundDrawable(shape(c, radiusDp, SURFACE))
         dialog.window?.decorView?.let { root ->
-            root.findViewById<TextView>(android.R.id.alertTitle)?.setTextColor(FG)
+            // alertTitle 是 AppCompat 自己声明的 id（android.R.id 里只有 message，没有它）
+            root.findViewById<TextView>(androidx.appcompat.R.id.alertTitle)?.setTextColor(FG)
             root.findViewById<TextView>(android.R.id.message)?.setTextColor(DIM)
         }
         dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.setTextColor(ACCENT)
