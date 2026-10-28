@@ -44,6 +44,8 @@ class PageReview(private val host: MainActivity) : ReviewBus.Listener {
     private lateinit var playIcon: ImageView
     private lateinit var playLabel: TextView
     private lateinit var stopBtn: TextView
+    private lateinit var prevBtn: TextView
+    private lateinit var nextBtn: TextView
     private lateinit var hint: TextView
 
     private lateinit var dayChip: TextView
@@ -219,41 +221,58 @@ class PageReview(private val host: MainActivity) : ReviewBus.Listener {
             gravity = Gravity.CENTER
         }
 
+        // 播放中才出现的三个小按钮：跳句 + 结束。内边距压到 12dp，
+        // 360dp 宽的屏上也塞得下，不会把中间的暂停键挤成一条缝。
+        fun sideBtn(label: String, color: Int, onClick: () -> Unit) = Ui.text(host, label, 13f, color, true).apply {
+            gravity = Gravity.CENTER
+            setPadding(dp(12), dp(14), dp(12), dp(14))
+            background = Ui.ripple(host, 18, Ui.SURFACE, 1, Ui.STROKE)
+            isClickable = true
+            visibility = View.GONE
+            setOnClickListener { onClick() }
+        }
+
+        prevBtn = sideBtn("上一句", Ui.DIM) {
+            ReviewService.command(host, ReviewService.ACTION_PREV)
+        }
+        nextBtn = sideBtn("下一句", Ui.DIM) {
+            ReviewService.command(host, ReviewService.ACTION_NEXT)
+        }
+
         playCircle = LinearLayout(host).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
             background = Ui.ripple(host, 18, Ui.SOLID, 0, Ui.STROKE)
             isClickable = true
-            setPadding(dp(26), dp(14), dp(26), dp(14))
+            setPadding(dp(20), dp(14), dp(20), dp(14))
             setOnClickListener { onPlayClick() }
         }
         playIcon = Ui.icon(host, R.drawable.ic_play, Ui.ON_SOLID, 18)
         playLabel = Ui.text(host, "开始复习", 15f, Ui.ON_SOLID, true)
         playCircle.addView(playIcon)
         playCircle.addView(playLabel, W.wrap(host, left = 8))
+
+        row.addView(prevBtn, sideParams(0))
         row.addView(
             playCircle,
-            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                marginStart = dp(8)
+            }
         )
+        row.addView(nextBtn, sideParams(8))
 
         // 播放中只给「暂停」会让人没法退出来，所以旁边常备一个「结束」
-        stopBtn = Ui.text(host, "结束", 14f, Ui.BAD, true).apply {
-            gravity = Gravity.CENTER
-            setPadding(dp(20), dp(14), dp(20), dp(14))
-            background = Ui.ripple(host, 18, Ui.SURFACE, 1, Ui.STROKE)
-            isClickable = true
-            visibility = View.GONE
-            setOnClickListener { ReviewService.command(host, ReviewService.ACTION_STOP) }
+        stopBtn = sideBtn("结束", Ui.BAD) {
+            ReviewService.command(host, ReviewService.ACTION_STOP)
         }
-        row.addView(
-            stopBtn,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { leftMargin = dp(10) }
-        )
+        row.addView(stopBtn, sideParams(8))
         return row
     }
+
+    private fun sideParams(leftDp: Int) = LinearLayout.LayoutParams(
+        ViewGroup.LayoutParams.WRAP_CONTENT,
+        ViewGroup.LayoutParams.WRAP_CONTENT
+    ).apply { marginStart = dp(leftDp) }
 
     private fun renderChips() {
         if (!::chipsRow.isInitialized) return
@@ -442,10 +461,17 @@ class PageReview(private val host: MainActivity) : ReviewBus.Listener {
             playIcon.setImageResource(R.drawable.ic_play)
             playLabel.text = "开始复习"
         }
-        if (::stopBtn.isInitialized) {
-            stopBtn.visibility = if (s.running) View.VISIBLE else View.GONE
+        // 跳句和结束只在播放中出现：还没开始时它们没有意义，只会让首页显得吵
+        val side = if (s.running) View.VISIBLE else View.GONE
+        if (::stopBtn.isInitialized) stopBtn.visibility = side
+        if (::prevBtn.isInitialized) prevBtn.visibility = side
+        if (::nextBtn.isInitialized) nextBtn.visibility = side
+
+        hint.text = if (s.running) {
+            "第 ${s.stepIndex} / ${s.stepTotal} 句 · 耳机线控可暂停"
+        } else {
+            "点开始，锁屏也会继续读"
         }
-        hint.text = if (s.running) "耳机线控也能暂停 · 下一句在通知栏" else "点开始，锁屏也会继续读"
     }
 
     /**

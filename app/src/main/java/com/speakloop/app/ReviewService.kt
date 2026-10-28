@@ -44,6 +44,7 @@ class ReviewService : Service(), TextToSpeech.OnInitListener {
         const val ACTION_STOP = "com.speakloop.app.STOP"
         const val ACTION_TOGGLE = "com.speakloop.app.TOGGLE"
         const val ACTION_NEXT = "com.speakloop.app.NEXT"
+        const val ACTION_PREV = "com.speakloop.app.PREV"
 
         /** yyyy-MM-dd，不传就是今天 */
         const val EXTRA_DAY = "day"
@@ -59,6 +60,19 @@ class ReviewService : Service(), TextToSpeech.OnInitListener {
 
         /** 留白倒数的步长，100ms 一跳够画顺滑的圆环，也不至于太费电 */
         private const val TICK_MS = 100L
+
+        /**
+         * 系统媒体面板按这组 actions 决定显示哪些按钮 —— Android 13+ 的通知栏播放控件、
+         * 锁屏、蓝牙 AVRCP 全都只认这里，addAction 完全不参与。
+         * 少声明一个，对应按钮就不出现：加「上一条」时忘了这里，通知栏就只剩播放暂停。
+         */
+        private val SESSION_ACTIONS: Long =
+            PlaybackState.ACTION_PLAY_PAUSE or
+                PlaybackState.ACTION_PLAY or
+                PlaybackState.ACTION_PAUSE or
+                PlaybackState.ACTION_SKIP_TO_NEXT or
+                PlaybackState.ACTION_SKIP_TO_PREVIOUS or
+                PlaybackState.ACTION_STOP
 
         @Volatile
         var running: Boolean = false
@@ -248,6 +262,12 @@ class ReviewService : Service(), TextToSpeech.OnInitListener {
                 return START_STICKY
             }
 
+            ACTION_PREV -> {
+                if (!running) return START_NOT_STICKY
+                skipPrev()
+                return START_STICKY
+            }
+
             else -> {
                 startReview(intent)
                 return START_STICKY
@@ -360,7 +380,13 @@ class ReviewService : Service(), TextToSpeech.OnInitListener {
 
     private fun playCurrent() {
         if (!running) return
-        if (paused) return
+        // 暂停状态下被「上一句 / 下一句」挪了位置：只把界面挪过去，等继续时再出声，
+        // 否则下次 resume 会从旧位置重读，和屏幕上高亮的那行对不上。
+        if (paused) {
+            publish(false)
+            updateNotification()
+            return
+        }
         val engine = tts ?: return
 
         if (index >= steps.size) {
@@ -465,6 +491,20 @@ class ReviewService : Service(), TextToSpeech.OnInitListener {
         advance()
     }
 
+    /**
+     * 退回上一句。已经在第一句就原地重读，不绕回队尾 —— 复习是线性流程，
+     * 往回绕到结尾会让人瞬间失去方位感。
+     */
+    private fun skipPrev() {
+        if (!running) return
+        handler.removeCallbacks(tick)
+        handler.removeCallbacks(gapDone)
+        inGap = false
+        tts?.stop()
+        index = (index - 1).coerceAtLeast(0)
+        playCurrent()
+    }
+
     private fun finish() {
         running = false
         paused = false
@@ -559,6 +599,7 @@ class ReviewService : Service(), TextToSpeech.OnInitListener {
                 }
 
                 override fun onSkipToNext() = skipNext()
+                override fun onSkipToPrevious() = skipPrev()
                 override fun onStop() = finish()
             })
             setFlags(
@@ -581,13 +622,7 @@ class ReviewService : Service(), TextToSpeech.OnInitListener {
                         PlaybackState.PLAYBACK_POSITION_UNKNOWN,
                         1f
                     )
-                    .setActions(
-                        PlaybackState.ACTION_PLAY_PAUSE or
-                            PlaybackState.ACTION_PLAY or
-                            PlaybackState.ACTION_PAUSE or
-                            PlaybackState.ACTION_SKIP_TO_NEXT or
-                            PlaybackState.ACTION_STOP
-                    )
+                    .setActions(SESSION_ACTIONS)
                     .build()
             )
         }
@@ -603,13 +638,7 @@ class ReviewService : Service(), TextToSpeech.OnInitListener {
         s.setPlaybackState(
             PlaybackState.Builder()
                 .setState(state, PlaybackState.PLAYBACK_POSITION_UNKNOWN, 1f)
-                .setActions(
-                    PlaybackState.ACTION_PLAY_PAUSE or
-                        PlaybackState.ACTION_PLAY or
-                        PlaybackState.ACTION_PAUSE or
-                        PlaybackState.ACTION_SKIP_TO_NEXT or
-                        PlaybackState.ACTION_STOP
-                )
+                .setActions(SESSION_ACTIONS)
                 .build()
         )
     }
@@ -699,6 +728,10 @@ class ReviewService : Service(), TextToSpeech.OnInitListener {
             this, 2, Intent(this, ReviewService::class.java).setAction(ACTION_NEXT),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
+        val prevPending = PendingIntent.getService(
+            this, 4, Intent(this, ReviewService::class.java).setAction(ACTION_PREV),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
         val stopPending = PendingIntent.getService(
             this, 3, Intent(this, ReviewService::class.java).setAction(ACTION_STOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
@@ -718,9 +751,23 @@ class ReviewService : Service(), TextToSpeech.OnInitListener {
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setOngoing(running)
             .setContentIntent(openPending)
-            .addAction(0, if (paused) "继续" else "暂停", togglePending)
-            .addAction(0, "下一句", nextPending)
-            .addAction(0, "停止", stopPending)
+            // 图标不能传 0：华为这类 ROM 会把图标为 0 的 action 当无效项整条丢掉，
+            // 表现就是「通知栏里暂停、下一句都没了」。用系统自带媒体图标最稳。
+            .addAction(
+                android.R.drawable.ic_media_previous, "上一句", prevPending
+            )
+            .addAction(
+                if (paused) android.R.drawable.ic_media_play
+                else android.R.drawable.ic_media_pause,
+                if (paused) "继续" else "暂停",
+                togglePending
+            )
+            .addAction(
+                android.R.drawable.ic_media_next, "下一句", nextPending
+            )
+            .addAction(
+                android.R.drawable.ic_menu_close_clear_cancel, "停止", stopPending
+            )
 
         // MediaStyle + sessionToken 是蓝牙耳机能控制的前提：只做普通通知时，
         // 系统媒体面板和 AVRCP 不知道有这个播放会话，耳机上按暂停自然没反应。
@@ -728,7 +775,8 @@ class ReviewService : Service(), TextToSpeech.OnInitListener {
             builder.setStyle(
                 Notification.MediaStyle()
                     .setMediaSession(s.sessionToken)
-                    .setShowActionsInCompactView(0, 1)
+                    // 折叠时露三个：上一句 / 暂停 / 下一句。索引对应上面 addAction 的顺序
+                    .setShowActionsInCompactView(0, 1, 2)
             )
         }
         return builder.build()
