@@ -17,7 +17,7 @@ object Llm {
 
     data class Enriched(
         val meaning: String,
-        val examples: List<String>,
+        val examples: List<Example>,
         val dialogue: List<Line>
     )
 
@@ -25,9 +25,11 @@ object Llm {
 
     private const val SYSTEM = """You are an English-teaching assistant for a Chinese learner.
 Given one English phrase, return ONLY compact JSON, no markdown, no explanation:
-{"meaning":"中文释义，一句","examples":["例句1","例句2"],"dialogue":[{"s":"A","t":"..."},{"s":"B","t":"..."}]}
-Rules: examples must be 2 natural sentences containing the phrase; dialogue must be 4 lines
-alternating A and B, a realistic situation using the phrase; all English text stays English."""
+{"meaning":"中文释义，一句","examples":[{"t":"英文例句","c":"这句的中文"}],"dialogue":[{"s":"A","t":"英文","c":"中文"}]}
+Rules:
+- examples: exactly 2 natural sentences containing the phrase.
+- dialogue: exactly 4 lines alternating A and B, a realistic situation using the phrase.
+- t fields stay in English; c fields must be natural, colloquial Chinese translation of that same line (not a paraphrase of the phrase)."""
 
     /**
      * 把用户填的 Base URL 归一成完整的 chat/completions 地址。
@@ -179,12 +181,21 @@ alternating A and B, a realistic situation using the phrase; all English text st
         val root = JSONObject(text)
         val meaning = root.optString("meaning", "")
 
-        val examples = ArrayList<String>()
+        val examples = ArrayList<Example>()
         val exArr = root.optJSONArray("examples")
         if (exArr != null) {
             for (i in 0 until exArr.length()) {
-                val s = exArr.optString(i, "")
-                if (s.isNotBlank()) examples.add(s)
+                val o = exArr.optJSONObject(i)
+                if (o != null) {
+                    val en = o.optString("t", "").ifBlank { o.optString("text", "") }
+                    if (en.isNotBlank()) {
+                        examples.add(Example(en, pickCn(o)))
+                    }
+                } else {
+                    // 模型偶尔还是只给字符串数组，兼容一下
+                    val s = exArr.optString(i, "")
+                    if (s.isNotBlank()) examples.add(Example(s, ""))
+                }
             }
         }
 
@@ -194,13 +205,13 @@ alternating A and B, a realistic situation using the phrase; all English text st
             for (i in 0 until dlgArr.length()) {
                 val o = dlgArr.optJSONObject(i)
                 if (o != null) {
+                    val en = o.optString("t", "").ifBlank { o.optString("text", "") }
                     val sp = o.optString("s", if (i % 2 == 0) "A" else "B")
-                    val tx = o.optString("t", "")
-                    if (tx.isNotBlank()) dialogue.add(Line(sp, tx))
+                    if (en.isNotBlank()) dialogue.add(Line(sp, en, pickCn(o)))
                 } else {
-                    val tx = dlgArr.optString(i, "")
-                    if (tx.isNotBlank()) {
-                        dialogue.add(Line(if (i % 2 == 0) "A" else "B", tx))
+                    val s = dlgArr.optString(i, "")
+                    if (s.isNotBlank()) {
+                        dialogue.add(Line(if (i % 2 == 0) "A" else "B", s, ""))
                     }
                 }
             }
@@ -208,4 +219,8 @@ alternating A and B, a realistic situation using the phrase; all English text st
 
         return Enriched(meaning, examples, dialogue)
     }
+
+    /** 中文可能在 c，也可能是 cn / zh，模型不太稳定，都认。 */
+    private fun pickCn(o: JSONObject): String =
+        o.optString("c", "").ifBlank { o.optString("cn", "") }.ifBlank { o.optString("zh", "") }
 }

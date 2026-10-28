@@ -163,7 +163,7 @@ class ReviewService : Service(), TextToSpeech.OnInitListener {
             out.add(Step(p.phrase, 0.75f, 800L))
             out.add(Step(p.phrase, 1.0f, 1200L))
             for (ex in p.examples) {
-                out.add(Step(ex, 0.85f, 4000L))
+                out.add(Step(ex.text, 0.85f, 4000L))
             }
             for (line in p.dialogue) {
                 val rate = if (line.speaker == "B") 0.9f else 0.95f

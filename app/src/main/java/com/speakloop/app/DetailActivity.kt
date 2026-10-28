@@ -1,14 +1,19 @@
 package com.speakloop.app
 
 import android.Manifest
+import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.graphics.Typeface
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.style.ForegroundColorSpan
@@ -18,6 +23,7 @@ import android.text.style.StyleSpan
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -28,10 +34,15 @@ import androidx.appcompat.app.AppCompatActivity
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.concurrent.thread
 
 /**
- * 短语详情页。从列表点进来，单独占一屏，而不是弹窗——
- * 因为跟读要连续试几次、还会冒出一条结果，塞进弹窗里既看不清也容易误触关掉。
+ * 短语详情页。从列表点进来，单独占一屏。
+ *
+ * 跟读**优先走系统语音输入界面**（和添加短语时的「说一遍」同一条路）：
+ * 应用内的 SpeechRecognizer 依赖 Google 语音服务，华为等国产 ROM 上基本不可用。
+ * 系统界面由识别器 App 自己录音，也不需要我们申请麦克风权限。
+ * 只有在系统没有语音输入、但应用内识别服务存在时，才退回应用内并申请权限。
  */
 class DetailActivity : AppCompatActivity() {
 
@@ -39,23 +50,65 @@ class DetailActivity : AppCompatActivity() {
         const val EXTRA_ID = "phraseId"
     }
 
+    /** 顺序朗读的一步：读什么、多快、读完留多久、读的时候高亮哪个控件。 */
+    private data class Step(
+        val text: String,
+        val rate: Float,
+        val pauseAfter: Long,
+        val anchor: TextView?
+    )
+
+    private lateinit var prefs: SharedPreferences
     private lateinit var phrase: Phrase
+
     private lateinit var resultView: TextView
+    private lateinit var phraseAnchor: TextView
+    private lateinit var playIcon: ImageView
+    private lateinit var playLabel: TextView
+
+    private val exampleAnchors = ArrayList<TextView>()
+    private val dialogueAnchors = ArrayList<TextView>()
 
     private var tts: TextToSpeech? = null
     private var ttsReady = false
 
-    /** 跟读用的识别器，同一时间只允许一个 */
+    /** 应用内识别，只在系统没有语音输入界面时兜底用 */
     private var recognizer: SpeechRecognizer? = null
+
+    private val handler = Handler(Looper.getMainLooper())
+    private var steps: List<Step> = emptyList()
+    private var stepIndex = 0
+    private var playing = false
+    private var activeAnchor: TextView? = null
+
+    private val advance = Runnable {
+        if (!playing) return@Runnable
+        stepIndex++
+        playStep()
+    }
 
     private val micPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) {
-            beginListening()
+            listenInApp()
+        } else {
+            showVoiceDiagnostic("没有麦克风权限")
+        }
+    }
+
+    /** 系统语音输入界面的返回结果 */
+    private val voiceLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val heard = result.data
+            ?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+            ?.firstOrNull()
+        if (result.resultCode == RESULT_OK && !heard.isNullOrBlank()) {
+            showDiff(heard)
         } else {
             resultView.setTextColor(Ui.WARN)
-            resultView.text = "没有麦克风权限，跟读用不了。\n可以去系统设置里给 SpeakLoop 打开录音权限。"
+            resultView.text = "系统语音输入没返回内容，再点一次「跟读」"
         }
     }
 
@@ -63,6 +116,7 @@ class DetailActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        prefs = getSharedPreferences("speakloop", MODE_PRIVATE)
 
         val id = intent.getLongExtra(EXTRA_ID, 0L)
         val db = Db(this)
@@ -82,11 +136,33 @@ class DetailActivity : AppCompatActivity() {
 
         tts = TextToSpeech(this) { status ->
             ttsReady = status == TextToSpeech.SUCCESS
-            if (ttsReady) tts?.language = Locale.US
+            if (ttsReady) {
+                tts?.language = Locale.US
+                tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                    override fun onStart(utteranceId: String?) {}
+
+                    override fun onDone(utteranceId: String?) {
+                        if (!playing) return
+                        val gap = steps.getOrNull(stepIndex)?.pauseAfter ?: 600L
+                        handler.postDelayed(advance, gap)
+                    }
+
+                    override fun onError(utteranceId: String?) {
+                        handler.post {
+                            if (playing) {
+                                stopPlay()
+                                toast("语音引擎读不下去了，换个语音引擎或重开 App 试试")
+                            }
+                        }
+                    }
+                })
+            }
         }
     }
 
     override fun onDestroy() {
+        playing = false
+        handler.removeCallbacksAndMessages(null)
         recognizer?.destroy()
         recognizer = null
         tts?.stop()
@@ -137,11 +213,15 @@ class DetailActivity : AppCompatActivity() {
 
         if (phrase.examples.isNotEmpty()) {
             content.addView(Ui.sectionLabel(this, "例句"), marginTop(dp(26)))
-            for (s in phrase.examples) content.addView(exampleCard(s), marginTop(dp(10)))
+            phrase.examples.forEachIndexed { i, ex ->
+                content.addView(exampleCard(ex, i), marginTop(dp(10)))
+            }
         }
         if (phrase.dialogue.isNotEmpty()) {
             content.addView(Ui.sectionLabel(this, "情景对话"), marginTop(dp(26)))
-            for (line in phrase.dialogue) content.addView(bubble(line), marginTop(dp(8)))
+            phrase.dialogue.forEachIndexed { i, line ->
+                content.addView(bubble(line, i), marginTop(dp(8)))
+            }
         }
         return root
     }
@@ -168,12 +248,13 @@ class DetailActivity : AppCompatActivity() {
             background = Ui.shape(this@DetailActivity, 24, Ui.SURFACE, 1, Ui.STROKE)
         }
         card.addView(Ui.text(this, "短语", 11f, Ui.ACCENT, true).apply { letterSpacing = 0.3f })
-        card.addView(
-            Ui.text(this, phrase.phrase, 26f, Ui.FG, true).apply {
-                setPadding(0, dp(10), 0, 0)
-                setLineSpacing(dp(5).toFloat(), 1f)
-            }
-        )
+
+        phraseAnchor = Ui.text(this, phrase.phrase, 26f, Ui.FG, true).apply {
+            setPadding(0, dp(10), 0, 0)
+            setLineSpacing(dp(5).toFloat(), 1f)
+        }
+        card.addView(phraseAnchor)
+
         if (phrase.meaning.isNotBlank()) {
             card.addView(
                 Ui.text(this, phrase.meaning, 14f, Ui.DIM).apply {
@@ -198,13 +279,45 @@ class DetailActivity : AppCompatActivity() {
             )
         }
         card.addView(chips)
+
+        if (needsTranslation() && hasApiKey()) {
+            card.addView(
+                translatePill(),
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply { topMargin = dp(14) }
+            )
+        }
         return card
+    }
+
+    /**
+     * 「朗读全部」按钮自己搭而不是用 Ui.button：播放和停止之间要换图标换文字，
+     * 得留着两个子控件的引用。
+     */
+    private fun buildPlayButton(): LinearLayout {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(dp(18), dp(13), dp(18), dp(13))
+            background = Ui.ripple(this@DetailActivity, 24, Ui.ACCENT, 0, Ui.STROKE, 0x50000000)
+            isClickable = true
+            setOnClickListener { togglePlay() }
+        }
+        playIcon = Ui.icon(this, R.drawable.ic_play, Ui.ON_ACCENT, 18).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(18), dp(18)).apply { rightMargin = dp(8) }
+        }
+        playLabel = Ui.text(this, "朗读全部", 15f, Ui.ON_ACCENT, true)
+        row.addView(playIcon)
+        row.addView(playLabel)
+        return row
     }
 
     private fun buildActions(): View {
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         row.addView(
-            Ui.button(this, "朗读", R.drawable.ic_volume, true) { speak(phrase.phrase) },
+            buildPlayButton(),
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         )
         row.addView(
@@ -225,7 +338,7 @@ class DetailActivity : AppCompatActivity() {
         card.addView(Ui.sectionLabel(this, "跟读结果"))
         resultView = Ui.text(
             this,
-            "点上面的「跟读」，说完停一下。\n漏读的标红加删除线，多读的标黄。",
+            "点上面的「跟读」说一遍。\n漏读的标红加删除线，多读的标黄。",
             15f,
             Ui.MUTED
         ).apply {
@@ -236,19 +349,30 @@ class DetailActivity : AppCompatActivity() {
         return card
     }
 
-    private fun exampleCard(s: String): View {
+    private fun exampleCard(ex: Example, index: Int): View {
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(16), dp(14), dp(14), dp(14))
             background = Ui.ripple(this@DetailActivity, 16, Ui.SURFACE, 1, Ui.STROKE)
             isClickable = true
-            setOnClickListener { speak(s) }
+            setOnClickListener { speakOne(ex.text) }
         }
-        card.addView(
-            Ui.text(this, s, 15f, Ui.FG).apply { setLineSpacing(dp(4).toFloat(), 1f) },
-            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        )
+
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val en = Ui.text(this, ex.text, 15f, Ui.FG).apply { setLineSpacing(dp(4).toFloat(), 1f) }
+        col.addView(en)
+        if (ex.cn.isNotBlank()) {
+            col.addView(
+                Ui.text(this, ex.cn, 13f, Ui.DIM).apply {
+                    setPadding(0, dp(6), 0, 0)
+                    setLineSpacing(dp(3).toFloat(), 1f)
+                }
+            )
+        }
+        if (index >= exampleAnchors.size) exampleAnchors.add(en)
+
+        card.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         card.addView(
             Ui.icon(this, R.drawable.ic_volume, Ui.MUTED, 16),
             LinearLayout.LayoutParams(dp(16), dp(16)).apply { leftMargin = dp(10) }
@@ -257,7 +381,7 @@ class DetailActivity : AppCompatActivity() {
     }
 
     /** 对话做成聊天气泡：A 靠左，B 靠右并带一点蓝色，一眼能分清谁在说。 */
-    private fun bubble(line: Line): View {
+    private fun bubble(line: Line, index: Int): View {
         val isB = line.speaker == "B"
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -274,55 +398,168 @@ class DetailActivity : AppCompatActivity() {
                 if (isB) Ui.BUBBLE else Ui.STROKE
             )
             isClickable = true
-            setOnClickListener { speak(line.text) }
+            setOnClickListener { speakOne(line.text) }
         }
         box.addView(
             Ui.text(this, line.speaker, 10f, if (isB) Ui.ACCENT else Ui.MUTED, true)
                 .apply { letterSpacing = 0.2f }
         )
-        box.addView(
-            Ui.text(this, line.text, 14f, Ui.FG).apply {
-                setPadding(0, dp(5), 0, 0)
-                setLineSpacing(dp(4).toFloat(), 1f)
-            }
-        )
+        val en = Ui.text(this, line.text, 14f, Ui.FG).apply {
+            setPadding(0, dp(5), 0, 0)
+            setLineSpacing(dp(4).toFloat(), 1f)
+        }
+        box.addView(en)
+        if (line.cn.isNotBlank()) {
+            box.addView(
+                Ui.text(this, line.cn, 12f, Ui.DIM).apply {
+                    setPadding(0, dp(6), 0, 0)
+                    setLineSpacing(dp(3).toFloat(), 1f)
+                }
+            )
+        }
+        if (index >= dialogueAnchors.size) dialogueAnchors.add(en)
+
         row.addView(box)
         return row
     }
 
+    private fun translatePill(): TextView =
+        Ui.text(this, "＋ 补全中文释义", 12f, Ui.ACCENT, true).apply {
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+            background = Ui.ripple(this@DetailActivity, 12, Ui.SURFACE_2, 1, Ui.STROKE)
+            isClickable = true
+            setOnClickListener { translateNow() }
+        }
+
     private fun dayOf(ms: Long): String =
         SimpleDateFormat("M月d日添加", Locale.CHINA).format(Date(ms))
 
-    // ---------- 朗读 ----------
+    // ---------- 顺序朗读 ----------
 
-    private fun speak(text: String) {
+    private fun buildSteps(): List<Step> {
+        val out = ArrayList<Step>()
+        out.add(Step(phrase.phrase, 0.8f, 600L, phraseAnchor))
+        out.add(Step(phrase.phrase, 1.0f, 900L, phraseAnchor))
+        phrase.examples.forEachIndexed { i, ex ->
+            out.add(Step(ex.text, 0.9f, 1500L, exampleAnchors.getOrNull(i)))
+        }
+        phrase.dialogue.forEachIndexed { i, line ->
+            val rate = if (line.speaker == "B") 0.9f else 0.95f
+            out.add(Step(line.text, rate, 700L, dialogueAnchors.getOrNull(i)))
+        }
+        return out
+    }
+
+    private fun togglePlay() {
+        if (playing) {
+            stopPlay()
+            return
+        }
         if (!ttsReady) {
-            Toast.makeText(this, "语音引擎还没就绪，稍等一下再点", Toast.LENGTH_SHORT).show()
+            toast("语音引擎还没就绪，稍等一下再点")
+            return
+        }
+        steps = buildSteps()
+        if (steps.isEmpty()) return
+        stepIndex = 0
+        playing = true
+        updatePlayButton()
+        playStep()
+    }
+
+    private fun playStep() {
+        if (!playing) return
+        val step = steps.getOrNull(stepIndex)
+        if (step == null) {
+            stopPlay()
+            return
+        }
+        highlight(step.anchor)
+        tts?.setSpeechRate(step.rate)
+        tts?.speak(step.text, TextToSpeech.QUEUE_FLUSH, null, "s$stepIndex")
+    }
+
+    private fun stopPlay() {
+        playing = false
+        handler.removeCallbacksAndMessages(null)
+        tts?.stop()
+        highlight(null)
+        updatePlayButton()
+    }
+
+    private fun updatePlayButton() {
+        if (!::playIcon.isInitialized) return
+        playIcon.setImageResource(if (playing) R.drawable.ic_stop else R.drawable.ic_play)
+        playLabel.text = if (playing) "停止" else "朗读全部"
+    }
+
+    /** 播到哪句就把哪句染成强调色，其余复原成正文色。 */
+    private fun highlight(v: TextView?) {
+        activeAnchor?.let { if (it !== v) it.setTextColor(Ui.FG) }
+        activeAnchor = v
+        v?.setTextColor(Ui.ACCENT)
+    }
+
+    /** 点某一句单独听。会先停掉整条朗读，避免两路声音打架。 */
+    private fun speakOne(text: String) {
+        stopPlay()
+        if (!ttsReady) {
+            toast("语音引擎还没就绪，稍等一下再点")
             return
         }
         tts?.setSpeechRate(0.9f)
-        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "detail")
+        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "one")
     }
+
+    private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
 
     // ---------- 跟读 ----------
 
+    private fun voiceIntent(prompt: String): Intent =
+        Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(
+                RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
+            )
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-US")
+            putExtra(RecognizerIntent.EXTRA_PROMPT, prompt)
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+        }
+
+    private fun hasVoiceUi(): Boolean =
+        packageManager.queryIntentActivities(voiceIntent(""), 0).isNotEmpty()
+
     private fun onMicClick() {
-        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) !=
-            PackageManager.PERMISSION_GRANTED
-        ) {
-            micPermission.launch(Manifest.permission.RECORD_AUDIO)
+        stopPlay()
+        tts?.stop()
+
+        // 首选系统语音输入界面：不申请权限、不依赖 Google 服务
+        if (hasVoiceUi()) {
+            resultView.setTextColor(Ui.DIM)
+            resultView.text = "在弹出的语音输入界面里说一遍，说完等一下"
+            try {
+                voiceLauncher.launch(voiceIntent("跟读：${phrase.phrase}"))
+                return
+            } catch (e: ActivityNotFoundException) {
+                // 说能处理却没有界面，继续往下试应用内识别
+            }
+        }
+
+        if (SpeechRecognizer.isRecognitionAvailable(this)) {
+            if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) !=
+                PackageManager.PERMISSION_GRANTED
+            ) {
+                micPermission.launch(Manifest.permission.RECORD_AUDIO)
+            } else {
+                listenInApp()
+            }
             return
         }
-        beginListening()
+
+        showVoiceDiagnostic("这台手机没有可用的语音识别服务")
     }
 
-    private fun beginListening() {
-        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
-            resultView.setTextColor(Ui.WARN)
-            resultView.text = "这台手机没有可用的语音识别服务"
-            return
-        }
-        // 先停掉朗读，不然麦克风会把喇叭里自己的声音听进去
+    private fun listenInApp() {
         tts?.stop()
         recognizer?.destroy()
 
@@ -344,7 +581,11 @@ class DetailActivity : AppCompatActivity() {
 
             override fun onError(error: Int) {
                 resultView.setTextColor(Ui.WARN)
-                resultView.text = "没听清（错误码 $error），再点一次「跟读」"
+                resultView.text = buildString {
+                    append("应用内识别失败（错误码 ").append(error).append("）\n")
+                    append(errorHint(error))
+                    append("\n再点一次「跟读」重试。")
+                }
                 r.destroy()
                 if (recognizer === r) recognizer = null
             }
@@ -358,8 +599,7 @@ class DetailActivity : AppCompatActivity() {
                     resultView.setTextColor(Ui.WARN)
                     resultView.text = "这次没听到内容，再点一次「跟读」"
                 } else {
-                    resultView.setTextColor(Ui.FG)
-                    resultView.text = renderDiff(phrase.phrase, heard)
+                    showDiff(heard)
                 }
                 r.destroy()
                 if (recognizer === r) recognizer = null
@@ -369,16 +609,42 @@ class DetailActivity : AppCompatActivity() {
             override fun onEvent(eventType: Int, params: Bundle?) {}
         })
 
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(
-                RecognizerIntent.EXTRA_LANGUAGE_MODEL,
-                RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
-            )
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-US")
+        val intent = voiceIntent("说一遍这句话").apply {
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
-            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
         }
         r.startListening(intent)
+    }
+
+    private fun errorHint(code: Int): String = when (code) {
+        SpeechRecognizer.ERROR_AUDIO -> "录音出错，可能麦克风被别的应用占着。"
+        SpeechRecognizer.ERROR_CLIENT -> "客户端异常，通常是识别服务没启动或版本不匹配。"
+        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "权限不足，检查系统设置里的录音权限。"
+        SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT ->
+            "识别服务需要联网，检查网络。"
+
+        SpeechRecognizer.ERROR_NO_MATCH -> "没匹配到词，可能是环境太吵或说得太轻。"
+        SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "识别服务正忙，等一下再试。"
+        SpeechRecognizer.ERROR_SERVER -> "识别服务端出错。"
+        SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "一直没听到声音，检查麦克风。"
+        else -> "未知错误。"
+    }
+
+    /** 实在不行就把现场情况摊开给人看，比只说「失败」有用。 */
+    private fun showVoiceDiagnostic(reason: String) {
+        resultView.setTextColor(Ui.WARN)
+        resultView.text = buildString {
+            append(reason).append('\n')
+            append("系统语音输入界面：").append(if (hasVoiceUi()) "有" else "没有").append('\n')
+            append("应用内识别服务：")
+            append(if (SpeechRecognizer.isRecognitionAvailable(this@DetailActivity)) "有" else "没有")
+            append("\n\n语音识别需要系统里有可用的识别服务。")
+            append("可以在「设置 → 系统和更新 → 语言和输入法」里看语音输入是否启用。")
+        }
+    }
+
+    private fun showDiff(heard: String) {
+        resultView.setTextColor(Ui.FG)
+        resultView.text = renderDiff(phrase.phrase, heard)
     }
 
     private fun renderDiff(ref: String, heard: String): CharSequence {
@@ -416,6 +682,52 @@ class DetailActivity : AppCompatActivity() {
         sb.setSpan(StyleSpan(Typeface.BOLD), mark, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         sb.setSpan(RelativeSizeSpan(1.25f), mark, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         return sb
+    }
+
+    // ---------- 中文补全 ----------
+
+    private fun hasApiKey(): Boolean = prefs.getString("apiKey", "").orEmpty().isNotBlank()
+
+    private fun needsTranslation(): Boolean =
+        phrase.examples.any { it.cn.isBlank() } || phrase.dialogue.any { it.cn.isBlank() }
+
+    private fun translateNow() {
+        toast("正在让 AI 补全中文……")
+        thread {
+            var got: Llm.Enriched? = null
+            var error: String? = null
+            try {
+                got = Llm.enrich(
+                    prefs.getString("baseUrl", "")!!,
+                    prefs.getString("apiKey", "")!!,
+                    prefs.getString("model", "")!!,
+                    phrase.phrase
+                )
+            } catch (e: Exception) {
+                error = e.message ?: e.javaClass.simpleName
+            }
+
+            runOnUiThread {
+                val result = got
+                if (result == null) {
+                    toast("补全失败：${error ?: "未知原因"}")
+                    return@runOnUiThread
+                }
+                val db = Db(this)
+                try {
+                    db.updateContent(
+                        phrase.id,
+                        result.meaning.ifBlank { phrase.meaning },
+                        result.examples,
+                        result.dialogue
+                    )
+                } finally {
+                    db.close()
+                }
+                toast("已补全中文")
+                recreate()
+            }
+        }
     }
 
     // ---------- 删除 ----------
