@@ -102,7 +102,9 @@ class ReviewService : Service(), TextToSpeech.OnInitListener {
         val pauseAfter: Long,
         val phraseIndex: Int,
         val phraseId: Long,
-        val phraseTitle: String
+        val phraseTitle: String,
+        /** 行首小标签：短语 / 例句 / A / B */
+        val tag: String = "短语"
     )
 
     private var tts: TextToSpeech? = null
@@ -121,6 +123,14 @@ class ReviewService : Service(), TextToSpeech.OnInitListener {
 
     /** 已经记过账的短语，避免同一条读第二遍时重复 +1 */
     private val marked = HashSet<Long>()
+
+    /**
+     * 当前这条短语要读的所有行 + 正读到第几行。
+     * 复习页整块列出来并高亮当前行，所以播放时算一次缓存，倒数 tick 复用，不重复构造。
+     */
+    private var currentLines: List<ReviewBus.Line> = emptyList()
+    private var currentCursor = 0
+    private var cachedPhraseIndex = -1
 
     // 留白倒数
     private var inGap = false
@@ -151,13 +161,19 @@ class ReviewService : Service(), TextToSpeech.OnInitListener {
         advance()
     }
 
-    /** 倒数显示。只更新剩余毫秒，不推进步骤。 */
+    /** 倒数显示。只更新剩余毫秒，并在到点时兜底推进一步。 */
     private val tick: Runnable = Runnable {
         if (!running || paused || !inGap) return@Runnable
         val remain = (gapDeadline - SystemClock.elapsedRealtime()).coerceAtLeast(0L)
         gapRemain = remain
         publishGap()
-        if (remain > 0L) handler.postDelayed(tick, TICK_MS)
+        if (remain <= 0L) {
+            // gapDone 万一没被执行（消息被清、被系统吞），这里也推进一次；
+            // 两者都用 inGap 防重入，不会走两步。
+            gapDone.run()
+            return@Runnable
+        }
+        handler.postDelayed(tick, TICK_MS)
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -196,13 +212,14 @@ class ReviewService : Service(), TextToSpeech.OnInitListener {
             override fun onDone(utteranceId: String?) {
                 if (!running || paused) return
                 val gap = steps.getOrNull(index)?.pauseAfter ?: 800L
-                beginGap(gap)
+                // 回调不保证在主线程（各家引擎实现不同），统一挪回主线程再动状态
+                handler.post { if (running && !paused) beginGap(gap) }
             }
 
             override fun onError(utteranceId: String?) {
                 // 单句失败不该让整轮复习卡死，跳过继续
                 if (!running || paused) return
-                beginGap(300L)
+                handler.post { if (running && !paused) beginGap(300L) }
             }
         })
         if (pendingStart) {
@@ -298,6 +315,9 @@ class ReviewService : Service(), TextToSpeech.OnInitListener {
         steps = buildSteps(queue, longGap, phrasesOnly, rateScale)
         index = 0
         marked.clear()
+        cachedPhraseIndex = -1
+        currentLines = emptyList()
+        currentCursor = 0
         running = true
         paused = false
 
@@ -321,17 +341,17 @@ class ReviewService : Service(), TextToSpeech.OnInitListener {
         // 每个基准倍速都乘上设置里的全局语速：基准值之间的相对快慢保持不变
         fun k(r: Float) = (r * rateScale).coerceIn(0.3f, 2.0f)
         phrases.forEachIndexed { i, p ->
-            out.add(Step(p.phrase, p.meaning, k(0.75f), 800L, i, p.id, p.phrase))
-            out.add(Step(p.phrase, p.meaning, k(1.0f), longGap, i, p.id, p.phrase))
+            out.add(Step(p.phrase, p.meaning, k(0.75f), 800L, i, p.id, p.phrase, "短语"))
+            out.add(Step(p.phrase, p.meaning, k(1.0f), longGap, i, p.id, p.phrase, "短语"))
             if (phrasesOnly) return@forEachIndexed
             for (ex in p.examples) {
-                out.add(Step(ex.text, ex.cn, k(0.85f), longGap, i, p.id, p.phrase))
+                out.add(Step(ex.text, ex.cn, k(0.85f), longGap, i, p.id, p.phrase, "例句"))
             }
             for (line in p.dialogue) {
                 val rate = if (line.speaker == "B") 0.9f else 0.95f
-                out.add(Step(line.text, line.cn, k(rate), 900L, i, p.id, p.phrase))
+                out.add(Step(line.text, line.cn, k(rate), 900L, i, p.id, p.phrase, line.speaker))
             }
-            out.add(Step(p.phrase, p.meaning, k(1.0f), 1200L, i, p.id, p.phrase))
+            out.add(Step(p.phrase, p.meaning, k(1.0f), 1200L, i, p.id, p.phrase, "短语"))
         }
         return out
     }
@@ -353,6 +373,20 @@ class ReviewService : Service(), TextToSpeech.OnInitListener {
             }
         }
         val step = steps[index]
+
+        // 行清单只在换短语时重建；行内位置每次都更新
+        val start = steps.indexOfFirst { it.phraseIndex == step.phraseIndex }
+        if (start >= 0 && cachedPhraseIndex != step.phraseIndex) {
+            cachedPhraseIndex = step.phraseIndex
+            val lines = ArrayList<ReviewBus.Line>()
+            var i = start
+            while (i < steps.size && steps[i].phraseIndex == step.phraseIndex) {
+                lines.add(ReviewBus.Line(steps[i].text, steps[i].cn, steps[i].tag))
+                i++
+            }
+            currentLines = lines
+        }
+        currentCursor = if (start >= 0) (index - start).coerceAtLeast(0) else 0
 
         // 记账放在「真的开始读这条」的瞬间
         if (marked.add(step.phraseId)) {
@@ -477,7 +511,9 @@ class ReviewService : Service(), TextToSpeech.OnInitListener {
                 phrase = step?.phraseTitle.orEmpty(),
                 scopeLabel = scopeLabel,
                 stepIndex = index + 1,
-                stepTotal = steps.size
+                stepTotal = steps.size,
+                lines = currentLines,
+                cursor = currentCursor
             )
         )
     }
@@ -496,7 +532,9 @@ class ReviewService : Service(), TextToSpeech.OnInitListener {
                 phraseTotal = phraseTotal,
                 phrase = step?.phraseTitle.orEmpty(),
                 stepIndex = index + 1,
-                stepTotal = steps.size
+                stepTotal = steps.size,
+                lines = currentLines,
+                cursor = currentCursor
             )
         )
     }

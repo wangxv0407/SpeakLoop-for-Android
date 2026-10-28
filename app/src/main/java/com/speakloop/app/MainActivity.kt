@@ -212,6 +212,13 @@ class MainActivity : AppCompatActivity() {
 
     fun goTab(index: Int) {
         if (index == current) return
+        // 离开复习页就暂停：一边翻短语库一边念，注意力是散的，后台空转也费电
+        if (current == 2 && index != 2 &&
+            ReviewBus.state.running && !ReviewBus.state.paused
+        ) {
+            ReviewService.command(this, ReviewService.ACTION_TOGGLE)
+            toast("复习已暂停，回到复习页点「继续」")
+        }
         pages[current].visibility = View.GONE
         current = index
         pages[index].visibility = View.VISIBLE

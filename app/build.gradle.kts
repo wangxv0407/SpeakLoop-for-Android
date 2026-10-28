@@ -11,8 +11,8 @@ android {
         applicationId = "com.speakloop.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 8
-        versionName = "1.8"
+        versionCode = 9
+        versionName = "1.9"
     }
 
     // 固定 debug 签名。不这么做的后果：GitHub Actions 每次跑在全新机器上，

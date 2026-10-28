@@ -14,6 +14,14 @@ import java.util.concurrent.CopyOnWriteArrayList
  */
 object ReviewBus {
 
+    /** 短语里的一行：例句、对话或短语本身，供复习页把整条内容摊开显示。 */
+    data class Line(
+        val text: String,
+        val cn: String,
+        /** 行首的小标签：短语 / 例句 / A / B */
+        val tag: String
+    )
+
     /** 一次发布就是一次完整状态，界面不需要自己做差量判断。 */
     data class State(
         /** 服务在跑（可能处于暂停） */
@@ -38,7 +46,11 @@ object ReviewBus {
         val scopeLabel: String = "",
         /** 第几句 / 共几句（整轮） */
         val stepIndex: Int = 0,
-        val stepTotal: Int = 0
+        val stepTotal: Int = 0,
+        /** 当前这条短语要读的全部行，按播放顺序 */
+        val lines: List<Line> = emptyList(),
+        /** 正在读第几行（0 起），用来在列表里高亮 */
+        val cursor: Int = 0
     )
 
     interface Listener {

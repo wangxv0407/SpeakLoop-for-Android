@@ -6,6 +6,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import java.time.LocalDate
@@ -30,14 +31,14 @@ class PageReview(private val host: MainActivity) : ReviewBus.Listener {
 
     private lateinit var phraseText: TextView
     private lateinit var meaningText: TextView
-    private lateinit var lineTag: TextView
-    private lateinit var lineText: TextView
-    private lateinit var lineCn: TextView
 
-    private lateinit var stateBox: LinearLayout
-    private lateinit var ring: RingView
-    private lateinit var stateTitle: TextView
-    private lateinit var stateSub: TextView
+    /** 当前短语要读的全部行；每行留一组引用，切行时只改颜色不重建 */
+    private class RowRefs(val bar: View, val tag: TextView, val en: TextView, val cnTv: TextView)
+
+    private lateinit var lineBox: LinearLayout
+    private lateinit var stateLine: TextView
+    private val rows = ArrayList<RowRefs>()
+    private var lastLines: List<ReviewBus.Line> = emptyList()
 
     private lateinit var playCircle: LinearLayout
     private lateinit var playIcon: ImageView
@@ -75,10 +76,16 @@ class PageReview(private val host: MainActivity) : ReviewBus.Listener {
 
         root.addView(buildTop())
         root.addView(buildCard(), W.margin(host, top = 12))
-        root.addView(buildStateArea(), LinearLayout.LayoutParams(
+        root.addView(buildLineList(), LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
-        ))
-        root.addView(buildPlayButton())
+        ).apply { topMargin = dp(10) })
+
+        stateLine = Ui.text(host, "", 12f, Ui.MUTED).apply {
+            gravity = Gravity.CENTER
+            setPadding(0, dp(8), 0, 0)
+        }
+        root.addView(stateLine)
+        root.addView(buildPlayButton(), W.margin(host, top = 10))
         hint = Ui.text(host, "点开始，锁屏也会继续读", 10f, Ui.MUTED).apply {
             gravity = Gravity.CENTER
         }
@@ -151,51 +158,59 @@ class PageReview(private val host: MainActivity) : ReviewBus.Listener {
         card.addView(phraseText)
         meaningText = Ui.text(host, "", 13f, Ui.DIM).apply { setPadding(0, dp(5), 0, 0) }
         card.addView(meaningText)
-
-        card.addView(View(host).apply { setBackgroundColor(Ui.STROKE) },
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1).apply {
-                topMargin = dp(13)
-                bottomMargin = dp(12)
-            })
-
-        lineTag = Ui.text(host, "", 10f, Ui.MUTED).apply { letterSpacing = 0.02f }
-        card.addView(lineTag)
-        lineText = Ui.text(host, "", 15f, Ui.FG).apply {
-            setPadding(0, dp(5), 0, 0)
-            setLineSpacing(dp(4).toFloat(), 1f)
-        }
-        card.addView(lineText)
-        lineCn = Ui.text(host, "", 12f, Ui.DIM).apply {
-            setPadding(0, dp(4), 0, 0)
-            setLineSpacing(dp(3).toFloat(), 1f)
-        }
-        card.addView(lineCn)
         return card
     }
 
-    private fun buildStateArea(): View {
-        stateBox = LinearLayout(host).apply {
+    /**
+     * 下方摊开这条短语要读的全部内容（短语两遍 / 例句 / 对话 / 收尾）。
+     * 骑车时能一眼看到「还有几句」，留白时高亮的那行就是该你跟读的。
+     */
+    private fun buildLineList(): View {
+        val scroll = ScrollView(host).apply {
+            isVerticalScrollBarEnabled = false
+            clipToPadding = false
+        }
+        lineBox = LinearLayout(host).apply {
             orientation = LinearLayout.VERTICAL
+            setPadding(0, 0, 0, dp(4))
+        }
+        scroll.addView(lineBox)
+        return scroll
+    }
+
+    private fun addLineRow(line: ReviewBus.Line): RowRefs {
+        val row = LinearLayout(host).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(6), 0, dp(6))
+        }
+        val bar = View(host).apply {
+            setBackgroundColor(android.graphics.Color.TRANSPARENT)
+            layoutParams = LinearLayout.LayoutParams(dp(3), ViewGroup.LayoutParams.MATCH_PARENT)
+        }
+        val tag = Ui.text(host, line.tag, 9f, Ui.MUTED, true).apply {
             gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(dp(32), ViewGroup.LayoutParams.WRAP_CONTENT)
         }
-        ring = RingView(host).apply {
-            thicknessDp = 9f
-            labelSizeDp = 30f
-            layoutParams = LinearLayout.LayoutParams(dp(104), dp(104))
-            visibility = View.GONE
+        val col = LinearLayout(host).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(8), 0, 0, 0)
         }
-        stateBox.addView(ring)
-        stateTitle = Ui.text(host, "", 15f, Ui.GOOD, true).apply {
-            gravity = Gravity.CENTER
-            setPadding(0, dp(13), 0, 0)
+        val en = Ui.text(host, line.text, 14f, Ui.FG).apply { setLineSpacing(dp(3).toFloat(), 1f) }
+        col.addView(en)
+        val cnTv = Ui.text(host, line.cn, 11f, Ui.MUTED).apply {
+            setPadding(0, dp(3), 0, 0)
+            visibility = if (line.cn.isBlank()) View.GONE else View.VISIBLE
         }
-        stateBox.addView(stateTitle)
-        stateSub = Ui.text(host, "", 11f, Ui.MUTED).apply {
-            gravity = Gravity.CENTER
-            setPadding(0, dp(4), 0, 0)
-        }
-        stateBox.addView(stateSub)
-        return stateBox
+        col.addView(cnTv)
+
+        row.addView(bar)
+        row.addView(tag)
+        row.addView(
+            col,
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        )
+        lineBox.addView(row)
+        return RowRefs(bar, tag, en, cnTv)
     }
 
     private fun buildPlayButton(): View {
@@ -393,48 +408,29 @@ class PageReview(private val host: MainActivity) : ReviewBus.Listener {
             track.layoutParams = it
         }
 
-        // 卡片
+        // 卡片：只负责「在练哪一条」。释义取第一行（短语本身）的中文
+        val meaning = s.lines.firstOrNull()?.cn.orEmpty()
         if (s.phrase.isNotBlank()) {
             phraseText.text = s.phrase
-            meaningText.text = s.cn
-            lineTag.text = if (s.gap) "你刚才听到的" else "正在读"
-            lineText.text = s.text
-            lineCn.text = s.cn
-            lineText.setTextColor(if (s.gap) Ui.FG else Ui.HILITE)
-            lineCn.visibility = if (s.cn.isBlank()) View.GONE else View.VISIBLE
+            meaningText.text = meaning
+            meaningText.visibility = if (meaning.isBlank()) View.GONE else View.VISIBLE
         } else {
             phraseText.text = "还没开始"
             meaningText.text = ""
-            lineTag.text = ""
-            lineText.text = ""
-            lineCn.text = ""
-            lineCn.visibility = View.GONE
+            meaningText.visibility = View.GONE
         }
 
-        // 中间状态区
-        if (s.running && s.gap && s.remainMs > 0) {
-            ring.visibility = View.VISIBLE
-            ring.progress = if (s.gapTotalMs > 0) {
-                s.remainMs.toFloat() / s.gapTotalMs
-            } else 0f
-            ring.labelText = "${((s.remainMs + 999) / 1000)}"
-            stateTitle.text = "该你了"
-            stateTitle.setTextColor(Ui.GOOD)
-            stateSub.text = "大声跟读一遍"
-            stateSub.visibility = View.VISIBLE
-        } else if (s.running) {
-            ring.visibility = View.GONE
-            stateTitle.text = if (s.paused) "已暂停" else "正在朗读"
-            stateTitle.setTextColor(if (s.paused) Ui.WARN else Ui.DIM)
-            stateSub.text = if (s.paused) "点下面继续" else ""
-            stateSub.visibility = if (s.paused) View.VISIBLE else View.GONE
-        } else {
-            ring.visibility = View.GONE
-            stateTitle.text = dayTitle()
-            stateTitle.setTextColor(Ui.DIM)
-            stateSub.text = "读完这一轮就停，不会自动循环"
-            stateSub.visibility = View.VISIBLE
+        // 下方的整条内容清单 + 当前行高亮
+        renderLines(s)
+
+        stateLine.text = when {
+            !s.running -> dayTitle()
+            s.paused -> "已暂停 · 点下面「继续」"
+            s.gap -> "该你了 · ${(s.remainMs + 999) / 1000} 秒"
+            else -> "正在朗读…"
         }
+        stateLine.setTextColor(if (s.gap) Ui.GOOD else Ui.MUTED)
+        stateLine.visibility = if (stateLine.text.isBlank()) View.GONE else View.VISIBLE
 
         // 大按钮
         if (s.running) {
@@ -450,6 +446,28 @@ class PageReview(private val host: MainActivity) : ReviewBus.Listener {
             stopBtn.visibility = if (s.running) View.VISIBLE else View.GONE
         }
         hint.text = if (s.running) "耳机线控也能暂停 · 下一句在通知栏" else "点开始，锁屏也会继续读"
+    }
+
+    /**
+     * 只在「换短语 / 换行」时重建行视图，倒数每 100ms 只改颜色和一行状态文字，
+     * 否则每个 tick 都重建 7 个 View，界面会抖。
+     */
+    private fun renderLines(s: ReviewBus.State) {
+        if (!::lineBox.isInitialized) return
+        if (s.lines !== lastLines || rows.size != s.lines.size) {
+            lastLines = s.lines
+            rows.clear()
+            lineBox.removeAllViews()
+            s.lines.forEach { rows.add(addLineRow(it)) }
+        }
+        rows.forEachIndexed { i, r ->
+            val current = i == s.cursor
+            val active = if (s.gap) Ui.GOOD else Ui.HILITE
+            r.bar.setBackgroundColor(if (current) active else android.graphics.Color.TRANSPARENT)
+            r.en.setTextColor(if (current) active else Ui.FG)
+            r.cnTv.setTextColor(if (current) Ui.DIM else Ui.MUTED)
+            r.tag.setTextColor(if (current) active else Ui.MUTED)
+        }
     }
 
     private fun dayTitle(): String {
