@@ -192,7 +192,7 @@ class PageStats(private val host: MainActivity) {
                 setPadding(0, 0, dp(5), 0)
             }
         )
-        val soft = intArrayOf(0.0f, 0.28f, 0.58f, 1.0f)
+        val soft = floatArrayOf(0.0f, 0.28f, 0.58f, 1.0f)
         for (t in soft) {
             legend.addView(View(host).apply {
                 setBackgroundColor(blend(Ui.SURFACE_2, Ui.GOOD, t))
