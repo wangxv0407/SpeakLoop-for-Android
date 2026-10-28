@@ -42,6 +42,7 @@ class PageReview(private val host: MainActivity) : ReviewBus.Listener {
     private lateinit var playCircle: LinearLayout
     private lateinit var playIcon: ImageView
     private lateinit var playLabel: TextView
+    private lateinit var stopBtn: TextView
     private lateinit var hint: TextView
 
     private lateinit var dayChip: TextView
@@ -198,6 +199,11 @@ class PageReview(private val host: MainActivity) : ReviewBus.Listener {
     }
 
     private fun buildPlayButton(): View {
+        val row = LinearLayout(host).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+
         playCircle = LinearLayout(host).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
@@ -210,7 +216,28 @@ class PageReview(private val host: MainActivity) : ReviewBus.Listener {
         playLabel = Ui.text(host, "开始复习", 15f, Ui.ON_SOLID, true)
         playCircle.addView(playIcon)
         playCircle.addView(playLabel, W.wrap(host, left = 8))
-        return playCircle
+        row.addView(
+            playCircle,
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        )
+
+        // 播放中只给「暂停」会让人没法退出来，所以旁边常备一个「结束」
+        stopBtn = Ui.text(host, "结束", 14f, Ui.BAD, true).apply {
+            gravity = Gravity.CENTER
+            setPadding(dp(20), dp(14), dp(20), dp(14))
+            background = Ui.ripple(host, 18, Ui.SURFACE, 1, Ui.STROKE)
+            isClickable = true
+            visibility = View.GONE
+            setOnClickListener { ReviewService.command(host, ReviewService.ACTION_STOP) }
+        }
+        row.addView(
+            stopBtn,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { leftMargin = dp(10) }
+        )
+        return row
     }
 
     private fun renderChips() {
@@ -293,7 +320,7 @@ class PageReview(private val host: MainActivity) : ReviewBus.Listener {
 
         val dialog = AlertDialog.Builder(host)
             .setTitle("复习哪一天加的短语")
-            .setSingleChoiceItems(labels.toTypedArray(), checked) { d, which ->
+            .setSingleChoiceItems(Ui.dialogItems(labels), checked) { d, which ->
                 selectedDay = dates[which]
                 updateDayChip()
                 d.dismiss()
@@ -308,15 +335,19 @@ class PageReview(private val host: MainActivity) : ReviewBus.Listener {
 
     private fun pickRate() {
         val values = arrayOf(0.7f, 0.85f, 1f, 1.15f, 1.3f)
-        val labels = values.map { "×" + String.format("%.2f", it).trimEnd('0').trimEnd('.') }
+        // 标签写死，不用 String.format：既躲开 locale 差异，也保证一定是非空字符串
+        val labels = listOf("0.7×  慢", "0.85×", "1.0×  标准", "1.15×", "1.3×  快")
         val cur = values.indexOfFirst { kotlin.math.abs(it - host.prefs.getFloat("rate", 1f)) < 0.01f }
         val dialog = AlertDialog.Builder(host)
             .setTitle("朗读语速")
-            .setSingleChoiceItems(labels.toTypedArray(), cur) { d, which ->
+            .setSingleChoiceItems(Ui.dialogItems(labels), cur) { d, which ->
                 host.prefs.edit().putFloat("rate", values[which]).apply()
                 d.dismiss()
                 renderChips()
-                host.toast("下次开始复习生效")
+                host.toast(
+                    if (ReviewBus.state.running) "语速改了，下一轮复习生效"
+                    else "已设为 ${labels[which]}"
+                )
             }
             .setNegativeButton("取消", null)
             .create()
@@ -414,6 +445,9 @@ class PageReview(private val host: MainActivity) : ReviewBus.Listener {
         } else {
             playIcon.setImageResource(R.drawable.ic_play)
             playLabel.text = "开始复习"
+        }
+        if (::stopBtn.isInitialized) {
+            stopBtn.visibility = if (s.running) View.VISIBLE else View.GONE
         }
         hint.text = if (s.running) "耳机线控也能暂停 · 下一句在通知栏" else "点开始，锁屏也会继续读"
     }

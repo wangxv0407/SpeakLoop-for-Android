@@ -8,12 +8,17 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
+import android.os.SystemClock
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import java.time.LocalDate
@@ -103,6 +108,7 @@ class ReviewService : Service(), TextToSpeech.OnInitListener {
     private var tts: TextToSpeech? = null
     private var ready = false
     private var pendingStart = false
+    private var engineAttached = false
 
     private val handler = Handler(Looper.getMainLooper())
     private var steps: List<Step> = emptyList()
@@ -121,21 +127,37 @@ class ReviewService : Service(), TextToSpeech.OnInitListener {
     private var gapTotal = 0L
     private var gapRemain = 0L
 
+    /** 这一轮留白的绝对结束时刻（elapsedRealtime）。倒数按它算，才不会因为 tick 被拖延而漂移。 */
+    private var gapDeadline = 0L
+
     private var session: MediaSession? = null
 
-    /** 显式标类型：这个 Runnable 会 postDelayed 自己，不写类型编译器会卡在递归推断上。 */
+    private var wakeLock: PowerManager.WakeLock? = null
+    private var audioManager: AudioManager? = null
+    private var focusRequest: AudioFocusRequest? = null
+
+    /**
+     * 留白结束。推进只由这个任务负责，**不挂在倒数 tick 上**。
+     *
+     * 之前 tick 既画倒数又负责 advance，一旦某次 tick 没被调度（低电、被系统挂起、
+     * 或者链路上任何一次异常），整轮复习就永远停在那一句上——表现就是
+     * 「读完一遍短语就没声了」。现在推进只排一次 postDelayed，倒数另有任务。
+     */
+    private val gapDone: Runnable = Runnable {
+        if (!running || paused || !inGap) return@Runnable
+        inGap = false
+        gapRemain = 0L
+        publishGap()
+        advance()
+    }
+
+    /** 倒数显示。只更新剩余毫秒，不推进步骤。 */
     private val tick: Runnable = Runnable {
         if (!running || paused || !inGap) return@Runnable
-        gapRemain -= TICK_MS
-        if (gapRemain <= 0L) {
-            inGap = false
-            gapRemain = 0L
-            publishGap()
-            advance()
-        } else {
-            publishGap()
-            handler.postDelayed(tick, TICK_MS)
-        }
+        val remain = (gapDeadline - SystemClock.elapsedRealtime()).coerceAtLeast(0L)
+        gapRemain = remain
+        publishGap()
+        if (remain > 0L) handler.postDelayed(tick, TICK_MS)
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -144,17 +166,29 @@ class ReviewService : Service(), TextToSpeech.OnInitListener {
         super.onCreate()
         createChannel()
         createSession()
-        tts = TextToSpeech(this, this)
+        val engine = TextToSpeech(this, this)
+        tts = engine
+        // 有些引擎（华为自带的）会在构造里**同步**回调 onInit，那一刻 tts 字段还没赋值，
+        // 原来的 `val engine = tts ?: return` 会直接 return —— 语言和进度监听都没设上。
+        // 结果就是：第一句能读（speak 本身不依赖监听），读完没有 onDone，整轮停在那一句。
+        // 这里补一次，attachEngine 自己是幂等的。
+        if (ready) attachEngine(engine)
     }
 
     override fun onInit(status: Int) {
         ready = status == TextToSpeech.SUCCESS
-        val engine = tts ?: return
         if (!ready) {
             notifyState("语音引擎初始化失败")
             stopSelf()
             return
         }
+        tts?.let { attachEngine(it) }
+    }
+
+    /** 把语言和进度监听挂到引擎上，只挂一次。 */
+    private fun attachEngine(engine: TextToSpeech) {
+        if (engineAttached) return
+        engineAttached = true
         engine.language = Locale.US
         engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(utteranceId: String?) {}
@@ -267,6 +301,8 @@ class ReviewService : Service(), TextToSpeech.OnInitListener {
         running = true
         paused = false
 
+        acquireWakeLock()
+        requestFocus()
         startForegroundCompat()
         if (ready) playCurrent() else pendingStart = true
     }
@@ -331,18 +367,25 @@ class ReviewService : Service(), TextToSpeech.OnInitListener {
         inGap = false
         gapRemain = 0
         engine.setSpeechRate(step.rate)
-        engine.speak(step.text, TextToSpeech.QUEUE_FLUSH, null, "s$index")
+        val ok = engine.speak(step.text, TextToSpeech.QUEUE_FLUSH, null, "s$index")
         publish(false)
         updateNotification()
+
+        // 引擎拒收（正在初始化、被打断、或干脆坏了）时不会有 onDone 回调，
+        // 之前就整轮卡死在这一句。这里当成「这句读完了」，直接进留白继续往下走。
+        if (ok != TextToSpeech.SUCCESS) beginGap(300L)
     }
 
     private fun beginGap(ms: Long) {
         inGap = true
         gapTotal = ms
         gapRemain = ms
+        gapDeadline = SystemClock.elapsedRealtime() + ms
         publish(true)
         handler.removeCallbacks(tick)
-        handler.postDelayed(tick, TICK_MS)
+        handler.removeCallbacks(gapDone)
+        handler.postDelayed(gapDone, ms)     // 推进：绝对时间到点执行，与倒数无关
+        handler.postDelayed(tick, TICK_MS)   // 显示：只负责画圆环
     }
 
     private fun advance() {
@@ -354,7 +397,14 @@ class ReviewService : Service(), TextToSpeech.OnInitListener {
         if (!running || paused) return
         paused = true
         handler.removeCallbacks(tick)
-        if (!inGap) tts?.stop()
+        handler.removeCallbacks(gapDone)
+        if (inGap) {
+            // 暂停期间不流逝，恢复时按剩余时间重新排
+            gapRemain = (gapDeadline - SystemClock.elapsedRealtime()).coerceAtLeast(0L)
+        } else {
+            tts?.stop()
+        }
+        releaseWakeLock()
         publish(inGap)
         updateSessionState()
     }
@@ -362,8 +412,9 @@ class ReviewService : Service(), TextToSpeech.OnInitListener {
     private fun resume() {
         if (!running || !paused) return
         paused = false
+        acquireWakeLock()
         if (inGap) {
-            handler.postDelayed(tick, TICK_MS)
+            beginGap(gapRemain.coerceAtLeast(0L))
             publish(true)
         } else {
             playCurrent()
@@ -374,6 +425,7 @@ class ReviewService : Service(), TextToSpeech.OnInitListener {
     private fun skipNext() {
         if (!running) return
         handler.removeCallbacks(tick)
+        handler.removeCallbacks(gapDone)
         inGap = false
         tts?.stop()
         advance()
@@ -385,6 +437,8 @@ class ReviewService : Service(), TextToSpeech.OnInitListener {
         inGap = false
         handler.removeCallbacksAndMessages(null)
         tts?.stop()
+        releaseWakeLock()
+        abandonFocus()
         session?.isActive = false
         ReviewBus.reset()
         stopForeground(true)
@@ -393,6 +447,8 @@ class ReviewService : Service(), TextToSpeech.OnInitListener {
 
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
+        releaseWakeLock()
+        abandonFocus()
         tts?.stop()
         tts?.shutdown()
         tts = null
@@ -471,6 +527,14 @@ class ReviewService : Service(), TextToSpeech.OnInitListener {
                 MediaSession.FLAG_HANDLES_MEDIA_BUTTONS or
                     MediaSession.FLAG_HANDLES_TRANSPORT_CONTROLS
             )
+            // 锁屏/系统媒体面板点一下能回到 App，否则按了没地方可去
+            setSessionActivity(
+                PendingIntent.getActivity(
+                    this@ReviewService, 0,
+                    Intent(this@ReviewService, MainActivity::class.java),
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+            )
             isActive = true
             setPlaybackState(
                 PlaybackState.Builder()
@@ -512,6 +576,64 @@ class ReviewService : Service(), TextToSpeech.OnInitListener {
         )
     }
 
+    // ---------- 唤醒锁 / 音频焦点 ----------
+
+    /**
+     * 留白期间没有音频在播，CPU 会进休眠，Handler 的定时任务跟着停 —— 锁屏听复习
+     * 就会卡在两句之间。这里持一把 PARTIAL_WAKE_LOCK，只保 CPU 不睡、不亮屏。
+     * 带 1 小时超时兜底，忘了点结束也不会通宵耗电。
+     */
+    private fun acquireWakeLock() {
+        if (wakeLock?.isHeld == true) return
+        val pm = getSystemService(PowerManager::class.java) ?: return
+        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "SpeakLoop:review").apply {
+            setReferenceCounted(false)
+            acquire(60L * 60L * 1000L)
+        }
+    }
+
+    private fun releaseWakeLock() {
+        wakeLock?.let { if (it.isHeld) it.release() }
+        wakeLock = null
+    }
+
+    /**
+     * 申请音频焦点做两件事：来电话 / 微信语音时自动让路，
+     * 以及让系统把蓝牙耳机和线控的播放键路由到我们这个会话。
+     */
+    private fun requestFocus() {
+        if (focusRequest != null) return
+        val am = getSystemService(AudioManager::class.java) ?: return
+        audioManager = am
+        val attrs = AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_MEDIA)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+            .build()
+        val req = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+            .setAudioAttributes(attrs)
+            .setOnAudioFocusChangeListener { change ->
+                if (change == AudioManager.AUDIOFOCUS_LOSS ||
+                    change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT
+                ) {
+                    if (running && !paused) {
+                        pause()
+                        updateNotification()
+                    }
+                }
+            }
+            .build()
+        focusRequest = req
+        am.requestAudioFocus(req)
+    }
+
+    private fun abandonFocus() {
+        val am = audioManager
+        val req = focusRequest
+        if (am != null && req != null) am.abandonAudioFocusRequest(req)
+        focusRequest = null
+        audioManager = null
+    }
+
     // ---------- 通知 ----------
 
     private fun createChannel() {
@@ -551,7 +673,7 @@ class ReviewService : Service(), TextToSpeech.OnInitListener {
             scopeLabel
         }
 
-        return Notification.Builder(this, CHANNEL_ID)
+        val builder = Notification.Builder(this, CHANNEL_ID)
             .setContentTitle(title)
             .setContentText(sub)
             .setSubText(if (paused) "已暂停" else null)
@@ -561,7 +683,17 @@ class ReviewService : Service(), TextToSpeech.OnInitListener {
             .addAction(0, if (paused) "继续" else "暂停", togglePending)
             .addAction(0, "下一句", nextPending)
             .addAction(0, "停止", stopPending)
-            .build()
+
+        // MediaStyle + sessionToken 是蓝牙耳机能控制的前提：只做普通通知时，
+        // 系统媒体面板和 AVRCP 不知道有这个播放会话，耳机上按暂停自然没反应。
+        session?.let { s ->
+            builder.setStyle(
+                Notification.MediaStyle()
+                    .setMediaSession(s.sessionToken)
+                    .setShowActionsInCompactView(0, 1)
+            )
+        }
+        return builder.build()
     }
 
     private fun startForegroundCompat() {

@@ -91,7 +91,12 @@ class PagePhrases(private val host: MainActivity) {
                 W.margin(host, top = 14)
             )
         }
-        if (keepY > 0) scroll.post { scroll.scrollTo(0, keepY) }
+        // 恢复滚动位置时必须按新内容高度夹一下：页面切走期间复习会改 play_count，
+        // 列表按次数重排、总高度变了，旧的 scrollY 可能已经落在内容之外 —— 那一片就是空白。
+        scroll.post {
+            val max = (body.height - scroll.height).coerceAtLeast(0)
+            scroll.scrollTo(0, if (keepY > 0) keepY.coerceAtMost(max) else 0)
+        }
     }
 
     // ---------- 顶部 ----------

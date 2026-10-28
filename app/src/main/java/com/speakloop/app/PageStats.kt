@@ -22,12 +22,13 @@ class PageStats(private val host: MainActivity) {
     private val heatDays = 91
 
     val view: View
+    private lateinit var scroll: ScrollView
     private lateinit var body: LinearLayout
 
     private fun dp(v: Int) = host.dp(v)
 
     init {
-        val scroll = ScrollView(host).apply {
+        scroll = ScrollView(host).apply {
             isVerticalScrollBarEnabled = false
             clipToPadding = false
         }
@@ -41,6 +42,7 @@ class PageStats(private val host: MainActivity) {
     }
 
     fun refresh() {
+        val keepY = if (::scroll.isInitialized) scroll.scrollY else 0
         val today = Fmt.today()
         val monthStart = today.withDayOfMonth(1)
         val from = monthStart.toString()
@@ -81,6 +83,12 @@ class PageStats(private val host: MainActivity) {
         )
         body.addView(buildHeatmap(byDay), W.margin(host, top = 12))
         body.addView(buildTop(top), W.margin(host, top = 16))
+
+        // 同短语页：旧 scrollY 可能超出新内容高度，越界就是一片空白
+        scroll.post {
+            val max = (body.height - scroll.height).coerceAtLeast(0)
+            scroll.scrollTo(0, keepY.coerceAtMost(max))
+        }
     }
 
     private fun buildSummary(

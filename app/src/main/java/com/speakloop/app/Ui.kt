@@ -9,6 +9,9 @@ import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
+import android.text.SpannableString
+import android.text.Spanned
+import android.text.style.ForegroundColorSpan
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
@@ -290,8 +293,35 @@ object Ui {
         ).apply { leftMargin = dp(c, insetDp) }
     }
 
-    /** 把对话框默认的方块灰底换成本项目的圆角卡片。 */
+    /**
+     * 把对话框默认的方块灰底换成本项目的圆角卡片，并把文字色拉回当前主题。
+     *
+     * 系统对话框的标题走 android:textColorPrimary、按钮走 accent，都按**浅色主题**画的；
+     * 深色主题下我们会把背景换成深色卡片，黑字就糊在上面看不见了。
+     */
     fun roundDialog(dialog: AlertDialog, c: Context, radiusDp: Int = 24) {
         dialog.window?.setBackgroundDrawable(shape(c, radiusDp, SURFACE))
+        dialog.window?.decorView?.let { root ->
+            root.findViewById<TextView>(android.R.id.alertTitle)?.setTextColor(FG)
+            root.findViewById<TextView>(android.R.id.message)?.setTextColor(DIM)
+        }
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.setTextColor(ACCENT)
+        dialog.getButton(AlertDialog.BUTTON_NEGATIVE)?.setTextColor(ACCENT)
+        dialog.getButton(AlertDialog.BUTTON_NEUTRAL)?.setTextColor(ACCENT)
     }
+
+    /**
+     * 单选 / 列表对话框的文字项。
+     *
+     * AppTheme 继承的是 Theme.AppCompat（深色基底），列表行文字走的是
+     * textColorAlertDialogListItem，默认浅色；而 [roundDialog] 又把对话框背景换成了白色卡片，
+     * 结果就是白底白字——语速和日期选择框看起来一片空白只留几个圆点。
+     * 这里给每一项套一个 ForegroundColorSpan，颜色跟着 Ui.FG 走，深浅主题都不会瞎。
+     */
+    fun dialogItems(labels: List<String>): Array<CharSequence> =
+        labels.map { s ->
+            SpannableString(s).apply {
+                setSpan(ForegroundColorSpan(FG), 0, s.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
+        }.toTypedArray()
 }
