@@ -1,6 +1,7 @@
 package com.speakloop.app
 
 import android.content.SharedPreferences
+import android.graphics.Color
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -8,20 +9,27 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import androidx.appcompat.app.AlertDialog
+import java.io.File
 import kotlin.concurrent.thread
 
 /**
  * 第四屏：设置。
  *
- * 除了 AI 那三项需要输入框，其余都是「点一下就生效」的分段选择，
- * 不再有「改完还要按保存」这一步——唯一例外是 AI 配置，
- * 因为改一半的 key 存进去会把下一次建短语搞坏。
+ * 版式对齐设计稿：每一项是「左标题 + 右当前值」的 52dp 行，行与行之间一条 1dp 细线，
+ * 一组装进一张卡片。值是对外展示的状态，点整行才弹出选择 —— 不把五枚胶囊堆在行下面，
+ * 那样一屏塞不下、层级也糊。
+ *
+ * 除了 AI 那三项必须输入框，其余都是「选完立刻生效」，没有「保存」按钮。
  */
 class PageSettings(private val host: MainActivity) {
 
     private val prefs: SharedPreferences get() = host.prefs
 
     val view: View
+
+    /** build() 会整页重建，必须自己记住滚动位置，否则改任何一项都跳回顶部 */
+    private lateinit var scroll: ScrollView
     private lateinit var body: LinearLayout
 
     private lateinit var baseUrl: EditText
@@ -39,7 +47,7 @@ class PageSettings(private val host: MainActivity) {
     }
 
     init {
-        val scroll = ScrollView(host).apply {
+        scroll = ScrollView(host).apply {
             isVerticalScrollBarEnabled = false
             clipToPadding = false
         }
@@ -55,83 +63,133 @@ class PageSettings(private val host: MainActivity) {
     private fun build() {
         // 重建页面会丢输入框里的内容，所以先把已经敲进去的 AI 配置存下来
         if (::baseUrl.isInitialized) saveAiQuietly()
+        val keepY = if (::scroll.isInitialized) scroll.scrollY else 0
+
         body.removeAllViews()
-        // 版本号向系统要，别再手写 —— 之前写死成 1.6，实际早到 1.9 了
-        body.addView(
-            Ui.text(host, "SpeakLoop ${appVersion()}".trim(), Ui.T.CAP, Ui.DIM)
-        )
-        body.addView(Ui.text(host, "设置", Ui.T.H1, Ui.FG, true).apply { letterSpacing = -0.01f })
+        body.addView(header())
 
         body.addView(section("复习"))
-        body.addView(reviewCard(), W.margin(host, top = 7))
+        body.addView(reviewCard(), W.margin(host, top = 6))
 
         body.addView(section("播放"))
-        body.addView(playCard(), W.margin(host, top = 7))
+        body.addView(playCard(), W.margin(host, top = 6))
 
         body.addView(section("外观"))
-        body.addView(themeCard(), W.margin(host, top = 7))
+        body.addView(themeCard(), W.margin(host, top = 6))
 
         body.addView(section("AI 补全"))
-        body.addView(aiCard(), W.margin(host, top = 7))
+        body.addView(aiCard(), W.margin(host, top = 6))
+
+        body.addView(section("数据"))
+        body.addView(dataCard(), W.margin(host, top = 6))
 
         body.addView(
             Ui.text(
                 host,
-                "短语存在这台手机上，删 App 就没了。\n" +
+                "短语和录音都存在这台手机上，删 App 就没了。\n" +
                     "语音用的是系统自带的 TTS 引擎，换引擎音色会变。",
                 Ui.T.CAP,
                 Ui.MUTED
             ).apply { setLineSpacing(dp(4).toFloat(), 1f) },
             W.margin(host, top = 22, left = 4)
         )
+
+        scroll.post {
+            val max = (body.height - scroll.height).coerceAtLeast(0)
+            scroll.scrollTo(0, keepY.coerceAtMost(max))
+        }
+    }
+
+    /** 标题一行：「设置」+ 右上角构建号，跟设计稿一致，不再竖排两行 */
+    private fun header(): View {
+        val row = LinearLayout(host).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.BOTTOM
+        }
+        row.addView(
+            Ui.text(host, "设置", Ui.T.H1, Ui.FG, true).apply { letterSpacing = -0.01f },
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        )
+        val v = appVersion()
+        if (v.isNotBlank()) {
+            row.addView(
+                Ui.text(host, "v$v", Ui.T.CAP, Ui.MUTED).apply { setPadding(0, 0, 0, dp(6)) }
+            )
+        }
+        return row
     }
 
     private fun section(t: String): TextView =
         Ui.text(host, t, Ui.T.CAP, Ui.MUTED, true).apply {
-            setPadding(dp(4), dp(14), 0, 0)
+            setPadding(dp(4), dp(18), 0, 0)
             letterSpacing = 0.06f
         }
 
-    private fun card(): LinearLayout = W.card(host).apply { setPadding(dp(16), dp(14), dp(16), dp(14)) }
+    /** 原型里卡片就是 `padding: 2px 14px`：上下几乎不留白，高度全靠行的 52dp 撑 */
+    private fun card(): LinearLayout = W.card(host).apply {
+        setPadding(dp(14), dp(2), dp(14), dp(2))
+    }
 
     /**
-     * 一行设置的标题：label 左、当前值右，行高对齐原型的 52dp。
-     * highlight = true 时值用绿色（「开」这种正向状态，和播放态一个语义）。
+     * 一行设置：左标题、右当前值，行高 52dp。
+     *
+     * highlight = true 时值用绿色（「开」这类正向状态，和播放态同一个语义）。
+     * 传了 onClick 就补一个 ›，点整行弹选择。
      */
-    private fun rowTitle(k: String, v: String, highlight: Boolean = false): View {
+    private fun setRow(
+        label: String,
+        value: String,
+        highlight: Boolean = false,
+        onClick: (() -> Unit)? = null
+    ): View {
         val row = LinearLayout(host).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             minimumHeight = dp(52)
+            setPadding(dp(2), 0, dp(2), 0)
         }
         row.addView(
-            Ui.text(host, k, Ui.T.BODY, Ui.FG),
+            Ui.text(host, label, Ui.T.BODY, Ui.FG),
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         )
-        row.addView(Ui.text(host, v, Ui.T.SUB, if (highlight) Ui.GOOD else Ui.MUTED, highlight))
-        return row
-    }
-
-    /** 一组分段选项，选中项是强调色浅底。 */
-    private fun choices(labels: List<String>, current: Int, onPick: (Int) -> Unit): View {
-        val row = LinearLayout(host).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(0, dp(9), 0, 0)
-        }
-        labels.forEachIndexed { i, label ->
-            val pill = Ui.pill(host, label, i == current) { onPick(i) }
-            row.addView(pill, LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
-            ).apply { if (i > 0) leftMargin = dp(5) })
+        row.addView(Ui.text(host, value, Ui.T.SUB, if (highlight) Ui.GOOD else Ui.MUTED, highlight))
+        if (onClick != null) {
+            row.addView(
+                Ui.text(host, "›", Ui.T.SUB, Ui.MUTED).apply { setPadding(dp(7), 0, 0, 0) }
+            )
+            row.background = Ui.ripple(
+                host, 10, Color.TRANSPARENT, 0, Ui.STROKE,
+                if (Ui.isDark) 0x1AFFFFFF else 0x12000000
+            )
+            row.isClickable = true
+            row.isFocusable = true
+            row.setOnClickListener { onClick() }
         }
         return row
     }
 
-    private fun divider() = View(host).apply {
+    private fun line() = View(host).apply {
         setBackgroundColor(Ui.STROKE)
-        layoutParams = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, 1
-        ).apply { topMargin = dp(13) }
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1)
+    }
+
+    /** 选项弹窗：选中即生效，不再需要「保存」 */
+    private fun pick(title: String, labels: List<String>, current: Int, onPick: (Int) -> Unit) {
+        val dialog = AlertDialog.Builder(host)
+            .setTitle(title)
+            .setSingleChoiceItems(Ui.dialogItems(labels), current) { d, which ->
+                d.dismiss()
+                onPick(which)
+            }
+            .setNegativeButton("取消", null)
+            .create()
+        dialog.show()
+        Ui.roundDialog(dialog, host)
+    }
+
+    private fun toggle(key: String, v: Boolean) {
+        prefs.edit().putBoolean(key, v).apply()
+        build()
     }
 
     // ---------- 复习 ----------
@@ -139,36 +197,38 @@ class PageSettings(private val host: MainActivity) {
     private fun reviewCard(): View {
         val c = card()
 
-        c.addView(rowTitle("每天练几条", "${prefs.getInt("dailyGoal", 5)} 条"))
         val goals = listOf(3, 5, 8)
-        val gi = goals.indexOf(prefs.getInt("dailyGoal", 5)).coerceAtLeast(0)
-        c.addView(choices(goals.map { "$it 条" }, gi) { i ->
-            prefs.edit().putInt("dailyGoal", goals[i]).apply()
-            build()
-        })
-
-        c.addView(divider())
-        c.addView(rowTitle("一轮最多几条", "${prefs.getInt("queueLimit", 15)} 条"))
-        val limits = listOf(10, 15, 25, 0)
-        val li = limits.indexOf(prefs.getInt("queueLimit", 15)).coerceAtLeast(0)
-        c.addView(choices(limits.map { if (it == 0) "不限" else "$it 条" }, li) { i ->
-            prefs.edit().putInt("queueLimit", limits[i]).apply()
-            build()
-        })
-
-        c.addView(divider())
-        val due = prefs.getBoolean("includeDue", true)
-        c.addView(rowTitle("补上从没练过的", if (due) "开" else "关", due))
-        c.addView(choices(listOf("开", "关"), if (due) 0 else 1) { i ->
-            prefs.edit().putBoolean("includeDue", i == 0).apply()
-            build()
-        })
+        val goal = prefs.getInt("dailyGoal", 5)
         c.addView(
-            Ui.text(host, "开着的话，以前只听过一遍、后来再没碰过的短语也会被排进来", Ui.T.CAP, Ui.MUTED)
-                .apply {
-                    setPadding(0, dp(7), 0, 0)
-                    setLineSpacing(dp(3).toFloat(), 1f)
+            setRow("每天练几条", "$goal 条") {
+                pick("每天练几条", goals.map { "$it 条" }, goals.indexOf(goal).coerceAtLeast(0)) { i ->
+                    prefs.edit().putInt("dailyGoal", goals[i]).apply()
+                    build()
                 }
+            }
+        )
+        c.addView(line())
+
+        val limits = listOf(10, 15, 25, 0)
+        val limit = prefs.getInt("queueLimit", 15)
+        c.addView(
+            setRow("一轮最多几条", if (limit == 0) "不限" else "$limit 条") {
+                val labels = limits.map { if (it == 0) "不限" else "$it 条" }
+                pick("一轮最多几条", labels, limits.indexOf(limit).coerceAtLeast(0)) { i ->
+                    prefs.edit().putInt("queueLimit", limits[i]).apply()
+                    build()
+                }
+            }
+        )
+        c.addView(line())
+
+        val due = prefs.getBoolean("includeDue", true)
+        c.addView(
+            setRow("补上从没练过的", if (due) "开" else "关", due) {
+                pick("补上从没练过的", listOf("开", "关"), if (due) 0 else 1) { i ->
+                    toggle("includeDue", i == 0)
+                }
+            }
         )
         return c
     }
@@ -178,38 +238,58 @@ class PageSettings(private val host: MainActivity) {
     private fun playCard(): View {
         val c = card()
 
-        val rate = prefs.getFloat("rate", 1f)
-        c.addView(rowTitle("朗读语速", "×" + trim(rate)))
         val rates = listOf(0.7f, 0.85f, 1f, 1.15f, 1.3f)
+        val rate = prefs.getFloat("rate", 1f)
         val ri = rates.indexOfFirst { kotlin.math.abs(it - rate) < 0.01f }.coerceAtLeast(0)
-        c.addView(choices(rates.map { "×" + trim(it) }, ri) { i ->
-            prefs.edit().putFloat("rate", rates[i]).apply()
-            build()
-        })
+        c.addView(
+            setRow("朗读语速", "×" + trim(rate)) {
+                pick("朗读语速", rates.map { "×" + trim(it) }, ri) { i ->
+                    prefs.edit().putFloat("rate", rates[i]).apply()
+                    build()
+                    host.toast(
+                        if (ReviewBus.state.running) "下一轮复习生效" else "已设为 ×${trim(rates[i])}"
+                    )
+                }
+            }
+        )
+        c.addView(line())
 
-        c.addView(divider())
         val follow = prefs.getBoolean("followGap", true)
-        c.addView(rowTitle("例句后留白", if (follow) "8 秒" else "0.5 秒"))
-        c.addView(choices(listOf("8 秒（跟读）", "0.5 秒"), if (follow) 0 else 1) { i ->
-            prefs.edit().putBoolean("followGap", i == 0).apply()
-            build()
-        })
+        c.addView(
+            setRow("跟读留白", if (follow) "8 秒" else "0.5 秒", follow) {
+                pick("跟读留白", listOf("8 秒（跟读）", "0.5 秒（只听）"), if (follow) 0 else 1) { i ->
+                    toggle("followGap", i == 0)
+                }
+            }
+        )
+        c.addView(line())
+
+        val loop = prefs.getBoolean("loop", false)
+        c.addView(
+            setRow("循环播放", if (loop) "开" else "关", loop) {
+                pick("循环播放", listOf("关", "开"), if (loop) 1 else 0) { i ->
+                    toggle("loop", i == 1)
+                }
+            }
+        )
+        c.addView(line())
+
         c.addView(
             Ui.text(
                 host,
-                "开着就走跟读节奏：留白 8 秒，弹出跟读面板录音，说完静音 1.2 秒自动进下一句。" +
-                    "关掉留白整轮能快一倍，适合只想听、不想开口的时候",
-                Ui.T.CAP, Ui.MUTED
-            ).apply { setPadding(0, dp(7), 0, 0) }
+                if (follow) {
+                    "跟读开着：留白 8 秒并弹出跟读面板，说完静音 1.2 秒自动进下一句。" +
+                        "只想听不想读就选 0.5 秒，整轮能快一倍。"
+                } else {
+                    "当前是只听模式：留白 0.5 秒，跟读面板不会出现。"
+                },
+                Ui.T.CAP,
+                Ui.MUTED
+            ).apply {
+                setPadding(dp(2), dp(10), dp(2), dp(10))
+                setLineSpacing(dp(3).toFloat(), 1f)
+            }
         )
-
-        c.addView(divider())
-        val loop = prefs.getBoolean("loop", false)
-        c.addView(rowTitle("循环播放", if (loop) "开" else "关", loop))
-        c.addView(choices(listOf("关", "开"), if (loop) 1 else 0) { i ->
-            prefs.edit().putBoolean("loop", i == 1).apply()
-            build()
-        })
         return c
     }
 
@@ -223,21 +303,25 @@ class PageSettings(private val host: MainActivity) {
         val mode = prefs.getString("theme", "system") ?: "system"
         val labels = listOf("跟随系统", "浅色", "深色")
         val keys = listOf("system", "light", "dark")
-        c.addView(rowTitle("主题", labels[keys.indexOf(mode).coerceAtLeast(0)]))
-        c.addView(choices(labels, keys.indexOf(mode).coerceAtLeast(0)) { i ->
-            prefs.edit().putString("theme", keys[i]).apply()
-            Ui.applyTheme(host)
-            host.recreate()
-        })
+        val idx = keys.indexOf(mode).coerceAtLeast(0)
+        c.addView(
+            setRow("主题", labels[idx]) {
+                pick("主题", labels, idx) { i ->
+                    prefs.edit().putString("theme", keys[i]).apply()
+                    Ui.applyTheme(host)
+                    host.recreate()
+                }
+            }
+        )
         return c
     }
 
     // ---------- AI ----------
 
     private fun aiCard(): View {
-        val c = card()
+        val c = W.card(host).apply { setPadding(dp(14), dp(14), dp(14), dp(14)) }
 
-        c.addView(W.label(host, "Base URL（只填到 /v1）").apply { setPadding(0, 0, 0, dp(6)) })
+        c.addView(fieldLabel("服务地址（只填到 /v1）"))
         baseUrl = W.input(
             host,
             Llm.DEFAULT_BASE,
@@ -245,11 +329,11 @@ class PageSettings(private val host: MainActivity) {
         )
         c.addView(baseUrl)
 
-        c.addView(W.label(host, "API Key"))
+        c.addView(fieldLabel("API Key"))
         apiKey = W.input(host, "sk-...", prefs.getString("apiKey", "")!!)
         c.addView(apiKey)
 
-        c.addView(W.label(host, "模型"))
+        c.addView(fieldLabel("模型"))
         model = W.input(host, "agnes-2.5-flash", prefs.getString("model", "agnes-2.5-flash")!!)
         c.addView(model)
 
@@ -274,8 +358,72 @@ class PageSettings(private val host: MainActivity) {
             setLineSpacing(dp(4).toFloat(), 1f)
         }
         c.addView(testResult)
+
+        c.addView(
+            Ui.text(
+                host,
+                "只用于新增短语时补全释义、例句和对话；不填也能用，只是要自己写中文。",
+                Ui.T.CAP,
+                Ui.MUTED
+            ).apply { setPadding(0, dp(10), 0, 0) }
+        )
         return c
     }
+
+    private fun fieldLabel(t: String): TextView =
+        Ui.text(host, t, Ui.T.CAP, Ui.MUTED).apply { setPadding(dp(2), 0, 0, dp(6)) }
+
+    // ---------- 数据 ----------
+
+    private fun dataCard(): View {
+        val c = card()
+
+        val db = Db(host)
+        val total = try {
+            db.count()
+        } finally {
+            db.close()
+        }
+        c.addView(setRow("短语总数", "$total 条"))
+        c.addView(line())
+
+        val (files, bytes) = followUsage()
+        c.addView(
+            setRow("跟读录音", if (files == 0) "无" else "$files 段 · ${size(bytes)}") {
+                if (files == 0) host.toast("还没有跟读录音") else confirmClearFollow(files, bytes)
+            }
+        )
+        return c
+    }
+
+    /** 跟读录音占用：每条短语一个 wav，覆盖式保存，文件数不会超过短语数 */
+    private fun followUsage(): Pair<Int, Long> {
+        val list = File(host.filesDir, "follow").listFiles() ?: return 0 to 0L
+        return list.size to list.sumOf { it.length() }
+    }
+
+    private fun size(bytes: Long): String = when {
+        bytes >= 1024 * 1024 -> String.format("%.1f MB", bytes / 1024f / 1024f)
+        bytes >= 1024 -> String.format("%d KB", bytes / 1024)
+        else -> "$bytes B"
+    }
+
+    private fun confirmClearFollow(files: Int, bytes: Long) {
+        val dialog = AlertDialog.Builder(host)
+            .setTitle("清除跟读录音？")
+            .setMessage("$files 段录音共 ${size(bytes)}，全部删掉，短语本身不受影响。")
+            .setPositiveButton("清除") { _, _ ->
+                File(host.filesDir, "follow").listFiles()?.forEach { it.delete() }
+                host.toast("录音已清除")
+                build()
+            }
+            .setNegativeButton("取消", null)
+            .create()
+        dialog.show()
+        Ui.roundDialog(dialog, host)
+    }
+
+    // ---------- AI 存取 ----------
 
     private fun saveAiQuietly() {
         prefs.edit()
@@ -286,11 +434,7 @@ class PageSettings(private val host: MainActivity) {
     }
 
     private fun saveAi() {
-        prefs.edit()
-            .putString("baseUrl", baseUrl.text.toString().trim().ifBlank { Llm.DEFAULT_BASE })
-            .putString("apiKey", apiKey.text.toString().trim())
-            .putString("model", model.text.toString().trim().ifBlank { "agnes-2.5-flash" })
-            .apply()
+        saveAiQuietly()
         host.toast("已保存")
     }
 

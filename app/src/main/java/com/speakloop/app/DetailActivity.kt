@@ -1,25 +1,12 @@
 package com.speakloop.app
 
-import android.Manifest
-import android.content.ActivityNotFoundException
-import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
-import android.graphics.Typeface
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.speech.RecognitionListener
-import android.speech.RecognizerIntent
-import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
-import android.text.SpannableStringBuilder
-import android.text.Spanned
-import android.text.style.ForegroundColorSpan
-import android.text.style.RelativeSizeSpan
-import android.text.style.StrikethroughSpan
-import android.text.style.StyleSpan
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -28,7 +15,6 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import java.text.SimpleDateFormat
@@ -39,14 +25,8 @@ import kotlin.concurrent.thread
 /**
  * 短语详情页。从列表点进来，单独占一屏。
  *
- * 跟读按三级降级，任何一级都不会让按钮「点了没反应」：
- * 1. 系统语音输入界面（ACTION_RECOGNIZE_SPEECH）：不申请权限、不依赖 Google 服务；
- * 2. 应用内 SpeechRecognizer：两条路都走不通时的次选，华为等机型常在这里假可用——
- *    能创建、能 startListening，但一个回调都不来，所以外面套了个 2.2 秒的看门狗；
- * 3. 录音对比：识别彻底不可用时直接开录音，用户自己回放和原声对比。
- *
- * 界面反馈统一走 [showStatus]，改文案的同时把结果卡滚进视野——只在下面悄悄改字，
- * 手机上一屏看不到，表现出来就是「点了没反应」。
+ * 跟读走本地 [FollowPanel]：AudioRecord 采集 + 实时波形 + 计时 + 结果，
+ * 说完静音 1.2 秒自动收尾。不依赖系统语音识别（华为上假可用）、不依赖网络。
  */
 class DetailActivity : AppCompatActivity() {
 
@@ -81,18 +61,11 @@ class DetailActivity : AppCompatActivity() {
     private lateinit var playIcon: ImageView
     private lateinit var playLabel: TextView
 
-    /** 识别服务假可用时（华为等机型）用来兜底：等这么久没有任何回调就换方案 */
-    private var voiceWatchdog: Runnable? = null
-    private var voiceResponsive = false
-
     private val exampleAnchors = ArrayList<TextView>()
     private val dialogueAnchors = ArrayList<TextView>()
 
     private var tts: TextToSpeech? = null
     private var ttsReady = false
-
-    /** 应用内识别，只在系统没有语音输入界面时兜底用 */
-    private var recognizer: SpeechRecognizer? = null
 
     private val handler = Handler(Looper.getMainLooper())
     private var steps: List<Step> = emptyList()
@@ -100,55 +73,13 @@ class DetailActivity : AppCompatActivity() {
     private var playing = false
     private var activeAnchor: TextView? = null
 
-    private var memo: VoiceMemo? = null
-    private lateinit var memoRecord: TextView
-
     /** 跟读面板：本地录音 + 波形 + 结果，详情页自己一个实例 */
     private lateinit var followPanel: FollowPanel
-    private lateinit var memoPlay: TextView
 
     private val advance = Runnable {
         if (!playing) return@Runnable
         stepIndex++
         playStep()
-    }
-
-    private val micPermission = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        if (granted) {
-            listenInApp()
-        } else {
-            showStatus(
-                "没有麦克风权限，识别和录音都用不了。\n" +
-                    "到「设置 → 应用 → SpeakLoop → 权限」里打开麦克风再试。",
-                Ui.WARN
-            )
-        }
-    }
-
-    private val recordPermission = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        if (granted) startRecording() else toast("没有麦克风权限，录不了")
-    }
-
-    /** 系统语音输入界面的返回结果 */
-    private val voiceLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        val heard = result.data
-            ?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
-            ?.firstOrNull()
-        if (result.resultCode == RESULT_OK && !heard.isNullOrBlank()) {
-            showDiff(heard)
-        } else {
-            showStatus(
-                "系统语音输入没有返回识别内容（可能被取消了，或这台机器没装识别引擎）。\n" +
-                    "可以直接点下面的「录一遍」，录完自己回放对比。",
-                Ui.WARN
-            )
-        }
     }
 
     private fun dp(v: Int): Int = Ui.dp(this, v)
@@ -174,8 +105,6 @@ class DetailActivity : AppCompatActivity() {
 
         setContentView(buildRoot())
         Ui.decorateWindow(this)
-        memo = VoiceMemo(this)
-        refreshMemo()
         maybeAutoTranslate()
 
         tts = TextToSpeech(this) { status ->
@@ -205,14 +134,9 @@ class DetailActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
-        cancelVoiceWatchdog()
         if (::followPanel.isInitialized) followPanel.release()
-        memo?.release()
-        memo = null
         playing = false
         handler.removeCallbacksAndMessages(null)
-        recognizer?.destroy()
-        recognizer = null
         tts?.stop()
         tts?.shutdown()
         tts = null
@@ -426,8 +350,8 @@ class DetailActivity : AppCompatActivity() {
         card.addView(Ui.sectionLabel(this, "跟读结果"))
         resultView = Ui.text(
             this,
-            "点上面的「跟读」说一遍，识别完这里会逐词标出漏读和多读。\n" +
-                "手机没有语音识别时，跟读会改成录音，「听录音」和原声对比。",
+            "点上面的「跟读」说一遍：会边录边显示波形和时长，说完自动停，\n" +
+                "结果给发声占比和语速，并可以回放和原声对比。",
             15f,
             Ui.MUTED
         ).apply {
@@ -435,70 +359,7 @@ class DetailActivity : AppCompatActivity() {
             setLineSpacing(dp(6).toFloat(), 1f)
         }
         card.addView(resultView)
-        card.addView(memoRow(), LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply { topMargin = dp(12) })
         return card
-    }
-
-    /** 录音只留最近一遍，所以这里只有「录」和「听」两个动作，没有历史列表。 */
-    private fun memoRow(): View {
-        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        memoRecord = pillText("录一遍") { toggleRecord() }
-        memoPlay = pillText("听录音") {
-            if (memo?.play(phrase.id) != true) toast("还没有录音")
-        }
-        row.addView(memoRecord)
-        row.addView(memoPlay, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply { leftMargin = dp(8) })
-        return row
-    }
-
-    private fun pillText(label: String, onClick: () -> Unit): TextView =
-        Ui.text(this, label, 12f, Ui.FG, true).apply {
-            setPadding(dp(13), dp(8), dp(13), dp(8))
-            background = Ui.ripple(this@DetailActivity, 11, Ui.SURFACE_2, 1, Ui.STROKE)
-            isClickable = true
-            setOnClickListener { onClick() }
-        }
-
-    private fun toggleRecord() {
-        if (memo?.recording == true) {
-            memo?.stopRecording()
-            memoRecord.text = "录一遍"
-            memoRecord.setTextColor(Ui.FG)
-            toast("已保存，点「听录音」回放")
-            refreshMemo()
-            return
-        }
-        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) !=
-            PackageManager.PERMISSION_GRANTED
-        ) {
-            recordPermission.launch(Manifest.permission.RECORD_AUDIO)
-            return
-        }
-        startRecording()
-    }
-
-    private fun startRecording() {
-        stopPlay()
-        tts?.stop()
-        if (memo?.start(phrase.id) == true) {
-            memoRecord.text = "停止录音"
-            memoRecord.setTextColor(Ui.BAD)
-            toast("正在录音，读完点「停止录音」")
-        } else {
-            toast("录音启动失败，可能有别的应用占着麦克风")
-        }
-    }
-
-    private fun refreshMemo() {
-        if (!::memoPlay.isInitialized) return
-        val has = memo?.has(phrase.id) ?: false
-        memoPlay.alpha = if (has) 1f else 0.45f
     }
 
     // ---------- 改例句 / 改对话 ----------
@@ -785,37 +646,6 @@ class DetailActivity : AppCompatActivity() {
 
     // ---------- 跟读 ----------
 
-    private fun voiceIntent(prompt: String): Intent =
-        Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(
-                RecognizerIntent.EXTRA_LANGUAGE_MODEL,
-                RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
-            )
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-US")
-            putExtra(RecognizerIntent.EXTRA_PROMPT, prompt)
-            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-        }
-
-    private fun hasVoiceUi(): Boolean =
-        packageManager.queryIntentActivities(voiceIntent(""), 0).isNotEmpty()
-
-    /**
-     * 所有跟读反馈都走这里：改文案 + 把结果卡滚进视野。
-     *
-     * 结果卡在按钮下方的折叠区域里，之前只改文字不滚动，手机上一屏看不到，
-     * 表现出来就是「点了没反应」。
-     */
-    private fun showStatus(text: CharSequence, color: Int) {
-        if (!::resultView.isInitialized) return
-        resultView.setTextColor(color)
-        resultView.text = text
-        if (!::resultCard.isInitialized) return
-        resultCard.post {
-            if (!::scroll.isInitialized) return@post
-            scroll.smoothScrollTo(0, (resultCard.top - dp(8)).coerceAtLeast(0))
-        }
-    }
-
     /**
      * 跟读入口。
      *
@@ -830,211 +660,6 @@ class DetailActivity : AppCompatActivity() {
         followPanel.show(phrase.id, phrase.phrase)
         resultView.setTextColor(Ui.MUTED)
         resultView.text = "正在录音，说完会自动停。结果出来后点「回放对比」和原声比。"
-    }
-
-    /** 识别不可用时的兜底：录一遍，让用户自己和原声对比。 */
-    private fun beginRecordFallback() {
-        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) !=
-            PackageManager.PERMISSION_GRANTED
-        ) {
-            recordPermission.launch(Manifest.permission.RECORD_AUDIO)
-            return
-        }
-        startRecording()
-    }
-
-    /**
-     * 华为等机型上 `isRecognitionAvailable()` 会返回 true，但 startListening 之后
-     * 一个回调都不来（既没有 onReadyForSpeech，也没有 onError）。
-     * 之前的版本就卡死在这里：按钮点了、界面一点变化都没有。
-     *
-     * 这里加一个看门狗。阈值给 3.5 秒而不是 2 秒——有的机型首次绑服务要一两秒，
-     * 太短会把本来能用的识别也打断。
-     */
-    private fun armVoiceWatchdog() {
-        cancelVoiceWatchdog()
-        val r = Runnable {
-            if (voiceResponsive) return@Runnable
-            recognizer?.destroy()
-            recognizer = null
-            showStatus(
-                "系统语音识别一直没有响应（华为等机型常见），已改成「录音对比」：\n" +
-                    "读完点停止，再点下面的「听录音」和原声对比。",
-                Ui.WARN
-            )
-            beginRecordFallback()
-        }
-        voiceWatchdog = r
-        handler.postDelayed(r, 3500)
-    }
-
-    private fun cancelVoiceWatchdog() {
-        voiceWatchdog?.let { handler.removeCallbacks(it) }
-        voiceWatchdog = null
-    }
-
-    private fun listenInApp() {
-        tts?.stop()
-        recognizer?.destroy()
-
-        voiceResponsive = false
-        showStatus("正在启动语音识别……（3 秒没反应会自动改成录音对比）", Ui.DIM)
-        armVoiceWatchdog()
-
-        val r = SpeechRecognizer.createSpeechRecognizer(this)
-        recognizer = r
-        r.setRecognitionListener(object : RecognitionListener {
-            override fun onReadyForSpeech(params: Bundle?) {
-                voiceResponsive = true
-                cancelVoiceWatchdog()
-                resultView.setTextColor(Ui.DIM)
-                resultView.text = "在听……说完停一下"
-            }
-
-            override fun onBeginningOfSpeech() {
-                voiceResponsive = true
-                cancelVoiceWatchdog()
-            }
-
-            override fun onRmsChanged(rmsdB: Float) {}
-
-            override fun onBufferReceived(buffer: ByteArray?) {}
-
-            override fun onEndOfSpeech() {
-                voiceResponsive = true
-                cancelVoiceWatchdog()
-                resultView.text = "识别中……"
-            }
-
-            override fun onError(error: Int) {
-                voiceResponsive = true
-                cancelVoiceWatchdog()
-                // 客户端异常 / 录音出错说明这套识别在这台机器上根本跑不起来，别让用户反复点
-                val fatal = error == SpeechRecognizer.ERROR_CLIENT ||
-                    error == SpeechRecognizer.ERROR_AUDIO
-                showStatus(
-                    buildString {
-                        append("应用内识别失败（错误码 ").append(error).append("）\n")
-                        append(errorHint(error))
-                        if (fatal) {
-                            append("\n已改成「录音对比」，读完点停止就能回放。")
-                        } else {
-                            append("\n再点一次「跟读」重试，或点下面「录一遍」自己对比。")
-                        }
-                    },
-                    Ui.WARN
-                )
-                r.destroy()
-                if (recognizer === r) recognizer = null
-                if (fatal) beginRecordFallback()
-            }
-
-            override fun onResults(results: Bundle?) {
-                voiceResponsive = true
-                cancelVoiceWatchdog()
-                val heard = results
-                    ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                    ?.firstOrNull()
-                    .orEmpty()
-                if (heard.isBlank()) {
-                    resultView.setTextColor(Ui.WARN)
-                    resultView.text = "这次没听到内容，再点一次「跟读」"
-                } else {
-                    showDiff(heard)
-                }
-                r.destroy()
-                if (recognizer === r) recognizer = null
-            }
-
-            override fun onPartialResults(partialResults: Bundle?) {}
-            override fun onEvent(eventType: Int, params: Bundle?) {}
-        })
-
-        val intent = voiceIntent("说一遍这句话").apply {
-            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
-        }
-        try {
-            r.startListening(intent)
-        } catch (e: Exception) {
-            cancelVoiceWatchdog()
-            showStatus(
-                "识别服务启动失败（${e.javaClass.simpleName}），已改成「录音对比」。",
-                Ui.WARN
-            )
-            beginRecordFallback()
-        }
-    }
-
-    private fun errorHint(code: Int): String = when (code) {
-        SpeechRecognizer.ERROR_AUDIO -> "录音出错，可能麦克风被别的应用占着。"
-        SpeechRecognizer.ERROR_CLIENT -> "客户端异常，通常是识别服务没启动或版本不匹配。"
-        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "权限不足，检查系统设置里的录音权限。"
-        SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT ->
-            "识别服务需要联网，检查网络。"
-
-        SpeechRecognizer.ERROR_NO_MATCH -> "没匹配到词，可能是环境太吵或说得太轻。"
-        SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "识别服务正忙，等一下再试。"
-        SpeechRecognizer.ERROR_SERVER -> "识别服务端出错。"
-        SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "一直没听到声音，检查麦克风。"
-        else -> "未知错误。"
-    }
-
-    /** 实在不行就把现场情况摊开给人看，比只说「失败」有用。 */
-    private fun showVoiceDiagnostic(reason: String) {
-        showStatus(
-            buildString {
-                append(reason).append('\n')
-                append("系统语音输入界面：").append(if (hasVoiceUi()) "有" else "没有").append('\n')
-                append("应用内识别服务：")
-                append(
-                    if (SpeechRecognizer.isRecognitionAvailable(this@DetailActivity)) "有（但没响应）"
-                    else "没有"
-                )
-                append("\n已切成「录音对比」：读完点停止，再点「听录音」和原声对比。")
-            },
-            Ui.WARN
-        )
-    }
-
-    private fun showDiff(heard: String) {
-        showStatus(renderDiff(phrase.phrase, heard), Ui.FG)
-    }
-
-    private fun renderDiff(ref: String, heard: String): CharSequence {
-        val tokens = Diff.align(ref, heard)
-        val sb = SpannableStringBuilder()
-        for (t in tokens) {
-            val start = sb.length
-            sb.append(t.text).append(' ')
-            val end = start + t.text.length
-            val flag = Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
-            when (t.status) {
-                Diff.MISSING -> {
-                    sb.setSpan(ForegroundColorSpan(Ui.BAD), start, end, flag)
-                    sb.setSpan(StrikethroughSpan(), start, end, flag)
-                }
-
-                Diff.EXTRA -> sb.setSpan(ForegroundColorSpan(Ui.WARN), start, end, flag)
-                else -> sb.setSpan(ForegroundColorSpan(Ui.FG), start, end, flag)
-            }
-        }
-
-        val acc = Diff.accuracy(tokens)
-        sb.append("\n\n")
-        val mark = sb.length
-        sb.append("命中率 ").append(acc.toString()).append("%")
-        sb.setSpan(
-            ForegroundColorSpan(
-                when {
-                    acc >= 80 -> Ui.GOOD
-                    acc >= 50 -> Ui.WARN
-                    else -> Ui.BAD
-                }
-            ), mark, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
-        )
-        sb.setSpan(StyleSpan(Typeface.BOLD), mark, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-        sb.setSpan(RelativeSizeSpan(1.25f), mark, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-        return sb
     }
 
     // ---------- 中文补全 ----------

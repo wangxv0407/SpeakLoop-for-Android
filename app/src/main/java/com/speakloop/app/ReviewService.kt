@@ -259,20 +259,20 @@ class ReviewService : Service(), TextToSpeech.OnInitListener {
             }
 
             ACTION_TOGGLE -> {
-                if (!running) return START_NOT_STICKY
+                if (!running) { stopSelf(); return START_NOT_STICKY }
                 if (paused) resume() else pause()
                 updateNotification()
                 return START_STICKY
             }
 
             ACTION_NEXT -> {
-                if (!running) return START_NOT_STICKY
+                if (!running) { stopSelf(); return START_NOT_STICKY }
                 skipNext()
                 return START_STICKY
             }
 
             ACTION_PREV -> {
-                if (!running) return START_NOT_STICKY
+                if (!running) { stopSelf(); return START_NOT_STICKY }
                 skipPrev()
                 return START_STICKY
             }

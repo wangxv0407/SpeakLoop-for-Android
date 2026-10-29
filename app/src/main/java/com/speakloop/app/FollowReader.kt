@@ -90,6 +90,9 @@ class FollowReader(private val c: Context) {
      */
     fun start(phraseId: Long): Boolean {
         if (alive) stop()
+        // 必须清掉上一句的结果：start 失败时 stop() 会把它原样返回，
+        // 面板就会把上一句的时长/占比当成这一句显示出来
+        result = null
         val f = fileOf(phraseId)
         outFile = f
 
