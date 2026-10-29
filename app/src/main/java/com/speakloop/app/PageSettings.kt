@@ -189,14 +189,18 @@ class PageSettings(private val host: MainActivity) {
 
         c.addView(divider())
         val follow = prefs.getBoolean("followGap", true)
-        c.addView(rowTitle("例句后留白", if (follow) "4 秒" else "0.5 秒"))
-        c.addView(choices(listOf("4 秒（跟读）", "0.5 秒"), if (follow) 0 else 1) { i ->
+        c.addView(rowTitle("例句后留白", if (follow) "8 秒" else "0.5 秒"))
+        c.addView(choices(listOf("8 秒（跟读）", "0.5 秒"), if (follow) 0 else 1) { i ->
             prefs.edit().putBoolean("followGap", i == 0).apply()
             build()
         })
         c.addView(
-            Ui.text(host, "关掉留白整轮能快一倍，适合只想听、不想跟读的时候", Ui.T.CAP, Ui.MUTED)
-                .apply { setPadding(0, dp(7), 0, 0) }
+            Ui.text(
+                host,
+                "开着就走跟读节奏：留白 8 秒，弹出跟读面板录音，说完静音 1.2 秒自动进下一句。" +
+                    "关掉留白整轮能快一倍，适合只想听、不想开口的时候",
+                Ui.T.CAP, Ui.MUTED
+            ).apply { setPadding(0, dp(7), 0, 0) }
         )
 
         c.addView(divider())

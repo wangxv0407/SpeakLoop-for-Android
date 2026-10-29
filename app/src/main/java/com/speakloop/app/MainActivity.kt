@@ -113,8 +113,19 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        review.release()
         review.detach()
         super.onDestroy()
+    }
+
+    /** 跟读面板要麦克风权限，结果得转给复习页里的面板 */
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (::review.isInitialized) review.onPermissionResult(requestCode, grantResults)
     }
 
     // ---------- 骨架 ----------

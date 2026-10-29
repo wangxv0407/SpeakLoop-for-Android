@@ -47,6 +47,14 @@ class ReviewService : Service(), TextToSpeech.OnInitListener {
         const val ACTION_NEXT = "com.speakloop.app.NEXT"
         const val ACTION_PREV = "com.speakloop.app.PREV"
 
+        /**
+         * 跟读结束，立刻往下走。
+         *
+         * 跟读留白给到 8 秒是为了说完一句话，但用户点「停下，看结果」之后
+         * 没必要再干等剩下几秒 —— 骑车时每一秒都在等红灯。
+         */
+        const val ACTION_GAP_DONE = "com.speakloop.app.GAP_DONE"
+
         /** yyyy-MM-dd，不传就是今天 */
         const val EXTRA_DAY = "day"
         /** 是否补上「从没练过的」那些旧词 */
@@ -269,6 +277,14 @@ class ReviewService : Service(), TextToSpeech.OnInitListener {
                 return START_STICKY
             }
 
+            ACTION_GAP_DONE -> {
+                if (!running || paused || !inGap) return START_NOT_STICKY
+                handler.removeCallbacks(tick)
+                handler.removeCallbacks(gapDone)
+                gapDone.run()
+                return START_STICKY
+            }
+
             else -> {
                 startReview(intent)
                 return START_STICKY
@@ -282,7 +298,9 @@ class ReviewService : Service(), TextToSpeech.OnInitListener {
         val prefs = getSharedPreferences("speakloop", Context.MODE_PRIVATE)
         loop = prefs.getBoolean("loop", false)
         val followGap = prefs.getBoolean("followGap", true)
-        val longGap = if (followGap) 4000L else 500L
+        // 跟读留白 8 秒：够把一句 5~8 个词的例句读完。说完静音 1.2 秒会自动收尾并推进，
+        // 所以实际停顿通常只有 3~5 秒；不开口就等满 8 秒（跟「只听」模式的 0.5 秒区分开）
+        val longGap = if (followGap) 8000L else 500L
         val rateScale = prefs.getFloat("rate", 1f)
 
         val dayText = intent?.getStringExtra(EXTRA_DAY).orEmpty()
@@ -551,6 +569,7 @@ class ReviewService : Service(), TextToSpeech.OnInitListener {
                 gapTotalMs = if (gap) gapTotal else 0L,
                 phraseIndex = (step?.phraseIndex ?: 0) + 1,
                 phraseTotal = phraseTotal,
+                phraseId = step?.phraseId ?: 0L,
                 phrase = step?.phraseTitle.orEmpty(),
                 scopeLabel = scopeLabel,
                 stepIndex = index + 1,
@@ -573,6 +592,7 @@ class ReviewService : Service(), TextToSpeech.OnInitListener {
                 gapTotalMs = gapTotal,
                 phraseIndex = (step?.phraseIndex ?: 0) + 1,
                 phraseTotal = phraseTotal,
+                phraseId = step?.phraseId ?: 0L,
                 phrase = step?.phraseTitle.orEmpty(),
                 stepIndex = index + 1,
                 stepTotal = steps.size,

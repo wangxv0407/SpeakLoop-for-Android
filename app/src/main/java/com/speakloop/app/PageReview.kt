@@ -1,6 +1,7 @@
 package com.speakloop.app
 
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -59,6 +60,12 @@ class PageReview(private val host: MainActivity) : ReviewBus.Listener {
 
     private lateinit var dayChip: TextView
     private lateinit var chipsRow: LinearLayout
+
+    /** 留白期弹出的跟读面板。全部本地采集，不依赖系统识别服务 */
+    private lateinit var followPanel: FollowPanel
+
+    /** 当前已经为哪一句开过跟读，避免每 100ms 的 tick 重复启动录音 */
+    private var followKey = ""
 
     private var selectedDay: LocalDate = Fmt.today()
 
@@ -152,6 +159,12 @@ class PageReview(private val host: MainActivity) : ReviewBus.Listener {
         playBox.addView(buildLineList(), LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
         ).apply { topMargin = dp(10) })
+
+        // 跟读面板只在留白期出现，所以默认 GONE；点「停下，看结果」后让服务立刻往下走
+        followPanel = FollowPanel(host) {
+            ReviewService.command(host, ReviewService.ACTION_GAP_DONE)
+        }
+        playBox.addView(followPanel.view, W.margin(host, top = 8))
 
         stateLine = Ui.text(host, "", Ui.T.SUB, Ui.MUTED).apply {
             gravity = Gravity.CENTER
@@ -557,6 +570,54 @@ class PageReview(private val host: MainActivity) : ReviewBus.Listener {
             s.lines.size > 1 -> "本条第 ${s.cursor + 1} / ${s.lines.size} 句"
             else -> "上一条 / 下一条按整条短语跳"
         }
+
+        updateFollow(s)
+    }
+
+    /**
+     * 跟读面板的开合只认两件事：现在是不是「够长的留白」、这一句是不是已经开过。
+     *
+     * 留白分两种：800~1200ms 的那种是句间小停顿，不够说一句话；
+     * 只有 8 秒的跟读留白才弹面板，否则整轮每句都弹一下就太吵了。
+     */
+    private fun updateFollow(s: ReviewBus.State) {
+        if (!::followPanel.isInitialized) return
+
+        val want = s.running && !s.paused && s.gap && s.gapTotalMs >= 2000L &&
+            host.prefs.getBoolean("followGap", true)
+
+        if (want) {
+            val line = s.lines.getOrNull(s.cursor)?.text.orEmpty()
+            val key = "${s.stepIndex}|${s.phraseId}|$line"
+            // 结果态留着让人看，不要被下一个 tick 顶掉
+            if (followKey != key && !followPanel.showingResult) {
+                followKey = key
+                followPanel.show(s.phraseId, line)
+            }
+        } else {
+            // 留白结束（自然到点或被「停下」提前结束）就收录音；结果态由面板自己延时收起
+            if (followPanel.isListening) followPanel.hide()
+            if (!s.running) followKey = ""
+        }
+
+        val panelVisible = followPanel.view.visibility == View.VISIBLE
+        if (::stateLine.isInitialized) {
+            stateLine.visibility =
+                if (panelVisible || stateLine.text.isBlank()) View.GONE else View.VISIBLE
+        }
+    }
+
+    /** 麦克风权限的回执，由宿主 Activity 转发 */
+    fun onPermissionResult(requestCode: Int, grantResults: IntArray) {
+        if (!::followPanel.isInitialized) return
+        followPanel.onPermissionResult(
+            requestCode,
+            grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED
+        )
+    }
+
+    fun release() {
+        if (::followPanel.isInitialized) followPanel.release()
     }
 
     /**

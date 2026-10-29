@@ -102,6 +102,9 @@ class DetailActivity : AppCompatActivity() {
 
     private var memo: VoiceMemo? = null
     private lateinit var memoRecord: TextView
+
+    /** 跟读面板：本地录音 + 波形 + 结果，详情页自己一个实例 */
+    private lateinit var followPanel: FollowPanel
     private lateinit var memoPlay: TextView
 
     private val advance = Runnable {
@@ -203,6 +206,7 @@ class DetailActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         cancelVoiceWatchdog()
+        if (::followPanel.isInitialized) followPanel.release()
         memo?.release()
         memo = null
         playing = false
@@ -213,6 +217,21 @@ class DetailActivity : AppCompatActivity() {
         tts?.shutdown()
         tts = null
         super.onDestroy()
+    }
+
+    /** 跟读面板要麦克风权限，回执转到面板 */
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (::followPanel.isInitialized) {
+            followPanel.onPermissionResult(
+                requestCode,
+                grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED
+            )
+        }
     }
 
     /** 返回和系统返回键都走这里，保证退场动画一致。 */
@@ -377,7 +396,14 @@ class DetailActivity : AppCompatActivity() {
         )
         col.addView(row)
 
-        // 跟读到底会走哪条路，先写在按钮下面，别让用户点完猜发生了什么
+        // 跟读面板：录音 + 波形 + 计时 + 结果，全部本地，不依赖系统识别服务
+        followPanel = FollowPanel(this)
+        col.addView(followPanel.view, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { topMargin = dp(12) })
+
+        // 先说清楚「跟读到底干什么」，别让用户点完猜发生了什么
         voiceHint = Ui.text(this, voiceModeText(), 11f, Ui.MUTED).apply {
             setPadding(dp(2), dp(10), dp(2), 0)
             setLineSpacing(dp(3).toFloat(), 1f)
@@ -386,13 +412,10 @@ class DetailActivity : AppCompatActivity() {
         return col
     }
 
-    private fun voiceModeText(): String = when {
-        hasVoiceUi() -> "跟读会打开系统语音输入界面，识别完自动逐词比对打分"
-        SpeechRecognizer.isRecognitionAvailable(this) ->
-            "跟读会用系统识别服务听一遍，识别完自动逐词比对打分"
-
-        else -> "这台手机没有语音识别服务，跟读＝录一遍，再点「听录音」自己对比"
-    }
+    /** 跟读只要麦克风，不需要联网、不需要系统语音识别 —— 华为上也能用。 */
+    private fun voiceModeText(): String =
+        "跟读会录下这一句并实时显示波形和时长，说完自动停；" +
+            "结果里给发声占比和语速，点「回放对比」就能和原声比。录音只存在手机里。"
 
     private fun buildResultCard(): View {
         val card = LinearLayout(this).apply {
@@ -793,42 +816,20 @@ class DetailActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * 跟读入口。
+     *
+     * v2.2 起统一走本地 [FollowPanel]：录音 + 波形 + 计时 + 结果。
+     * 原来的三级降级（系统语音输入界面 / 应用内 SpeechRecognizer / 录音对比）在华为上
+     * 前两级要么没有、要么「能 startListening 但零回调」，只剩下 3.5 秒的干等，
+     * 所以直接弃用。下面那些旧方法保留到下一版清理，现在不再从任何路径调用。
+     */
     private fun onMicClick() {
         stopPlay()
         tts?.stop()
-
-        // 首选系统语音输入界面：不申请权限、不依赖 Google 服务
-        if (hasVoiceUi()) {
-            showStatus("正在打开系统语音输入界面，在里面说一遍……", Ui.DIM)
-            try {
-                voiceLauncher.launch(voiceIntent("跟读：${phrase.phrase}"))
-                return
-            } catch (e: ActivityNotFoundException) {
-                // 系统说能处理、实际却没界面，继续往下试
-                showStatus("系统语音输入打不开，改用应用内识别……", Ui.WARN)
-            } catch (e: Exception) {
-                showStatus(
-                    "系统语音输入打不开（${e.javaClass.simpleName}），改用应用内识别……",
-                    Ui.WARN
-                )
-            }
-        }
-
-        if (SpeechRecognizer.isRecognitionAvailable(this)) {
-            if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) !=
-                PackageManager.PERMISSION_GRANTED
-            ) {
-                showStatus("跟读需要麦克风权限，请在弹窗里点「允许」", Ui.DIM)
-                micPermission.launch(Manifest.permission.RECORD_AUDIO)
-            } else {
-                listenInApp()
-            }
-            return
-        }
-
-        // 两条路都没有：直接进录音对比，绝不让按钮点了没反应
-        showVoiceDiagnostic("这台手机没有语音识别服务")
-        beginRecordFallback()
+        followPanel.show(phrase.id, phrase.phrase)
+        resultView.setTextColor(Ui.MUTED)
+        resultView.text = "正在录音，说完会自动停。结果出来后点「回放对比」和原声比。"
     }
 
     /** 识别不可用时的兜底：录一遍，让用户自己和原声对比。 */

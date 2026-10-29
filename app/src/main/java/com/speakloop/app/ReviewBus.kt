@@ -40,6 +40,8 @@ object ReviewBus {
         val phraseIndex: Int = 0,
         /** 本轮共几条短语 */
         val phraseTotal: Int = 0,
+        /** 当前短语的数据库 id，跟读录音按它落文件 */
+        val phraseId: Long = 0L,
         /** 当前短语原文，用于页面上始终显示「在练哪一条」 */
         val phrase: String = "",
         /** 这一轮的范围说明，例如「今日 3 + 待复习 5」 */
