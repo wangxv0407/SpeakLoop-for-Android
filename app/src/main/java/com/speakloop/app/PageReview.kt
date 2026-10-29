@@ -69,6 +69,13 @@ class PageReview(private val host: MainActivity) : ReviewBus.Listener {
 
     private var selectedDay: LocalDate = Fmt.today()
 
+    /**
+     * 用户没手动挑过日期时跟着「今天」走。
+     * 这个 App 会整晚留在后台，第二天早上回来若还停在昨天，
+     * 待机页会显示「10月28日 · 3 条」，看着像今天没内容。
+     */
+    private var followToday = true
+
     private fun dp(v: Int) = host.dp(v)
 
     init {
@@ -80,6 +87,7 @@ class PageReview(private val host: MainActivity) : ReviewBus.Listener {
     fun detach() = ReviewBus.remove(this)
 
     fun refresh() {
+        if (followToday) selectedDay = Fmt.today()
         renderChips()
         refreshReady()
         onReviewState(ReviewBus.state)
@@ -436,10 +444,14 @@ class PageReview(private val host: MainActivity) : ReviewBus.Listener {
             .setTitle("复习哪一天加的短语")
             .setSingleChoiceItems(Ui.dialogItems(labels), checked) { d, which ->
                 selectedDay = dates[which]
-                updateDayChip()
+                // 挑了历史日期就锁定它；挑回今天则恢复跟随当天
+                followToday = selectedDay.isEqual(Fmt.today())
                 d.dismiss()
                 // 换范围要按新范围重开一轮，否则用户会以为换了却还在读旧的
                 if (ReviewBus.state.running) ReviewService.command(host, ReviewService.ACTION_STOP)
+                // 待机态换日期没有任何状态变化会触发重画，中间那几块数字/
+                // 文案全靠这里重算 —— 以前只 updateDayChip()，所以只有胶囊变了。
+                refresh()
             }
             .setNegativeButton("取消", null)
             .create()
@@ -469,14 +481,31 @@ class PageReview(private val host: MainActivity) : ReviewBus.Listener {
         Ui.roundDialog(dialog, host)
     }
 
+    /**
+     * 每 100ms 的状态刷新也会走到这里，值没变就别 setText ——
+     * 换一个内容相同的新 String 实例，TextView 仍会重新 requestLayout。
+     */
     private fun updateDayChip() {
         if (!::dayChip.isInitialized) return
-        val label = if (selectedDay.isEqual(Fmt.today())) {
-            "今天"
-        } else {
-            Fmt.friendly(selectedDay)
+        val label = if (selectedDay.isEqual(Fmt.today())) "今天" else Fmt.friendly(selectedDay)
+        val text = "$label ▾"
+        if (dayChip.text.toString() != text) dayChip.text = text
+    }
+
+    /** 存档用：切主题会 recreate，不把选的日期带回来就会跳回今天。 */
+    fun dayIso(): String = selectedDay.toString()
+
+    fun restoreDay(iso: String?) {
+        if (iso.isNullOrBlank()) return
+        val d = try {
+            LocalDate.parse(iso)
+        } catch (e: Exception) {
+            return
         }
-        dayChip.text = "$label ▾"
+        if (d.isEqual(selectedDay)) return
+        selectedDay = d
+        followToday = d.isEqual(Fmt.today())
+        refresh()
     }
 
     // ---------- 状态渲染 ----------

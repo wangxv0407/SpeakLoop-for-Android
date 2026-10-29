@@ -38,6 +38,9 @@ class MainActivity : AppCompatActivity() {
         /** recreate() 之后要从这恢复当前页 */
         const val KEY_TAB = "tab"
 
+        /** 复习页右上角选的日期，同样要跨 recreate 保留 */
+        const val KEY_REVIEW_DAY = "reviewDay"
+
         val TABS = listOf(
             Triple("短语", R.drawable.ic_list, 0),
             Triple("统计", R.drawable.ic_stats, 1),
@@ -105,6 +108,7 @@ class MainActivity : AppCompatActivity() {
             pages[current].visibility = View.VISIBLE
             paintNav()
         }
+        review.restoreDay(savedInstanceState?.getString(KEY_REVIEW_DAY))
 
         if (Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
@@ -117,6 +121,7 @@ class MainActivity : AppCompatActivity() {
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         outState.putInt(KEY_TAB, current)
+        outState.putString(KEY_REVIEW_DAY, review.dayIso())
     }
 
     /** 从详情页回来可能删过东西，当前这页要重算。 */
