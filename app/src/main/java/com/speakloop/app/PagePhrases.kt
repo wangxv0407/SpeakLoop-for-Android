@@ -104,7 +104,7 @@ class PagePhrases(private val host: MainActivity) {
                 )
                 renderGroups(shown)
                 body.addView(
-                    Ui.text(host, "点开可跟读 · 长按可删除", Ui.T.CAP, Ui.MUTED).apply {
+                    Ui.text(host, "点开可跟读 · 长按可改可删", Ui.T.CAP, Ui.MUTED).apply {
                         gravity = Gravity.CENTER
                     },
                     W.margin(host, top = 14)
@@ -364,7 +364,7 @@ class PagePhrases(private val host: MainActivity) {
             isClickable = true
             setOnClickListener { host.openDetail(p.id) }
             setOnLongClickListener {
-                confirmDelete(p)
+                showRowMenu(p)
                 true
             }
         }
@@ -484,6 +484,26 @@ class PagePhrases(private val host: MainActivity) {
             out.add(Bucket(key, title, sub, items))
         }
         return out
+    }
+
+    /**
+     * 长按列表项：改 / 删。
+     * 原来是长按直接问「删除吗」，输错一个字只有重加一条路，练习记录也跟着丢。
+     */
+    private fun showRowMenu(p: Phrase) {
+        val dialog = AlertDialog.Builder(host)
+            .setTitle(p.phrase)
+            .setItems(arrayOf("改原文和释义", "删除")) { _, which ->
+                if (which == 0) {
+                    W.editPhraseDialog(host, p) { refresh() }
+                } else {
+                    confirmDelete(p)
+                }
+            }
+            .setNegativeButton("取消", null)
+            .create()
+        dialog.show()
+        Ui.roundDialog(dialog, host)
     }
 
     private fun confirmDelete(p: Phrase) {

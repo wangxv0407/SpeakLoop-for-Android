@@ -1,6 +1,7 @@
 package com.speakloop.app
 
 import android.content.Context
+import android.content.DialogInterface
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
@@ -12,6 +13,7 @@ import android.view.ViewGroup
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.appcompat.app.AlertDialog
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.ZoneId
@@ -231,8 +233,59 @@ object W {
         background = Ui.shape(c, 12, Ui.SURFACE_2, 1, Ui.STROKE)
     }
 
-    /** 白卡片容器，内容自己往里加。 */
-    fun card(c: Context, radiusDp: Int = 20): LinearLayout = LinearLayout(c).apply {
+    /**
+     * 改短语原文和释义。例句、对话各有自己的长按编辑，这一处专管顶上那两行。
+     *
+     * 保存走 [Db.updateContent] 的可选 text 参数，id 和练习记录原样保留 ——
+     * 这也是「改」和「删了重加」的唯一区别，值得多这十几个字。
+     */
+    fun editPhraseDialog(c: Context, p: Phrase, onSaved: () -> Unit) {
+        val box = LinearLayout(c).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(Ui.dp(c, 20), Ui.dp(c, 2), Ui.dp(c, 20), Ui.dp(c, 2))
+        }
+        val en = input(c, "英文原文", p.phrase)
+        val cn = input(c, "中文释义，可留空", p.meaning)
+        box.addView(en)
+        box.addView(
+            cn,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = Ui.dp(c, 8) }
+        )
+
+        val dialog = AlertDialog.Builder(c)
+            .setTitle("改短语")
+            .setView(box)
+            .setPositiveButton("保存", null)
+            .setNegativeButton("取消", null)
+            .create()
+        // 原文空着不关窗：关掉之后用户得重新点进来才能补上
+        dialog.setOnShowListener {
+            dialog.getButton(DialogInterface.BUTTON_POSITIVE).setOnClickListener {
+                val text = en.text.toString().trim()
+                if (text.isEmpty()) {
+                    en.error = "原文不能为空"
+                    return@setOnClickListener
+                }
+                val db = Db(c)
+                try {
+                    db.updateContent(
+                        p.id, cn.text.toString().trim(), p.examples, p.dialogue, text
+                    )
+                } finally {
+                    db.close()
+                }
+                dialog.dismiss()
+                onSaved()
+            }
+        }
+        dialog.show()
+        Ui.roundDialog(dialog, c)
+    }
+
+    /** 白卡片容器，内容自己往里加。 */    fun card(c: Context, radiusDp: Int = 20): LinearLayout = LinearLayout(c).apply {
         orientation = LinearLayout.VERTICAL
         background = Ui.card(c, radiusDp)
     }

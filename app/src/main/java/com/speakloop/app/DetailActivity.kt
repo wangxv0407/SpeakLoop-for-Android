@@ -223,11 +223,19 @@ class DetailActivity : AppCompatActivity() {
             setPadding(dp(14), dp(12), dp(14), dp(6))
         }
         bar.addView(Ui.iconButton(this, R.drawable.ic_back, Ui.FG, 44) { finish() })
+        // 右边比左边多出「编辑44 + 间距6」，标题不自带点补偿就会往左偏一半
         bar.addView(
-            Ui.text(this, "短语详情", 14f, Ui.MUTED, true).apply { gravity = Gravity.CENTER },
+            Ui.text(this, "短语详情", 14f, Ui.MUTED, true).apply {
+                gravity = Gravity.CENTER
+                setPadding(dp(50), 0, 0, 0)
+            },
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         )
-        bar.addView(Ui.iconButton(this, R.drawable.ic_delete, Ui.BAD, 44) { confirmDelete() })
+        bar.addView(Ui.iconButton(this, R.drawable.ic_edit, Ui.ACCENT, 44) { editPhrase() })
+        bar.addView(
+            Ui.iconButton(this, R.drawable.ic_delete, Ui.BAD, 44) { confirmDelete() },
+            LinearLayout.LayoutParams(dp(44), dp(44)).apply { leftMargin = dp(6) }
+        )
         return bar
     }
 
@@ -754,7 +762,15 @@ class DetailActivity : AppCompatActivity() {
         }
     }
 
-    // ---------- 删除 ----------
+    // ---------- 改原文 / 删 ----------
+
+    /**
+     * 改原文和释义。recreate() 会从库里重新读一遍，朗读用的 [steps] 也跟着换新，
+     * 否则改完点「朗读全部」还在读旧句子。
+     */
+    private fun editPhrase() {
+        W.editPhraseDialog(this, phrase) { recreate() }
+    }
 
     private fun confirmDelete() {
         val dialog = AlertDialog.Builder(this)

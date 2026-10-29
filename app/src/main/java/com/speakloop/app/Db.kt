@@ -131,9 +131,21 @@ class Db(context: Context) :
         return writableDatabase.insert("phrase", null, v)
     }
 
-    /** 改内容（补全中文、手改例句都走这里），id / 播放次数 / 创建时间不动。 */
-    fun updateContent(id: Long, meaning: String, examples: List<Example>, dialogue: List<Line>) {
+    /**
+     * 改内容（补全中文、手改例句都走这里），id / 播放次数 / 创建时间不动。
+     *
+     * [text] 非空时把原文一起改掉 —— 以前唯一的写入路径是 [insert]，
+     * 输错一个字只能删了重加，练习记录也跟着没了。
+     */
+    fun updateContent(
+        id: Long,
+        meaning: String,
+        examples: List<Example>,
+        dialogue: List<Line>,
+        text: String? = null
+    ) {
         val v = ContentValues()
+        if (text != null) v.put("phrase", text)
         v.put("meaning", meaning)
         v.put("examples", encodeExamples(examples))
         v.put("dialogue", encodeLines(dialogue))
