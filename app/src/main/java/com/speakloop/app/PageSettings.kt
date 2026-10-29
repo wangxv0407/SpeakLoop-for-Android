@@ -79,7 +79,7 @@ class PageSettings(private val host: MainActivity) {
                 host,
                 "短语存在这台手机上，删 App 就没了。\n" +
                     "语音用的是系统自带的 TTS 引擎，换引擎音色会变。",
-                10f,
+                Ui.T.CAP,
                 Ui.MUTED
             ).apply { setLineSpacing(dp(4).toFloat(), 1f) },
             W.margin(host, top = 22, left = 4)
@@ -94,16 +94,21 @@ class PageSettings(private val host: MainActivity) {
 
     private fun card(): LinearLayout = W.card(host).apply { setPadding(dp(16), dp(14), dp(16), dp(14)) }
 
-    private fun rowTitle(k: String, v: String): View {
+    /**
+     * 一行设置的标题：label 左、当前值右，行高对齐原型的 52dp。
+     * highlight = true 时值用绿色（「开」这种正向状态，和播放态一个语义）。
+     */
+    private fun rowTitle(k: String, v: String, highlight: Boolean = false): View {
         val row = LinearLayout(host).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
+            minimumHeight = dp(52)
         }
         row.addView(
             Ui.text(host, k, Ui.T.BODY, Ui.FG),
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         )
-        row.addView(Ui.text(host, v, Ui.T.SUB, Ui.MUTED))
+        row.addView(Ui.text(host, v, Ui.T.SUB, if (highlight) Ui.GOOD else Ui.MUTED, highlight))
         return row
     }
 
@@ -153,7 +158,7 @@ class PageSettings(private val host: MainActivity) {
 
         c.addView(divider())
         val due = prefs.getBoolean("includeDue", true)
-        c.addView(rowTitle("补上从没练过的", if (due) "开" else "关"))
+        c.addView(rowTitle("补上从没练过的", if (due) "开" else "关", due))
         c.addView(choices(listOf("开", "关"), if (due) 0 else 1) { i ->
             prefs.edit().putBoolean("includeDue", i == 0).apply()
             build()
@@ -196,7 +201,7 @@ class PageSettings(private val host: MainActivity) {
 
         c.addView(divider())
         val loop = prefs.getBoolean("loop", false)
-        c.addView(rowTitle("循环播放", if (loop) "开" else "关"))
+        c.addView(rowTitle("循环播放", if (loop) "开" else "关", loop))
         c.addView(choices(listOf("关", "开"), if (loop) 1 else 0) { i ->
             prefs.edit().putBoolean("loop", i == 1).apply()
             build()

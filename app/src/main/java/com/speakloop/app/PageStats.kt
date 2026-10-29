@@ -1,5 +1,6 @@
 package com.speakloop.app
 
+import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -73,7 +74,7 @@ class PageStats(private val host: MainActivity) {
 
         body.removeAllViews()
         body.addView(
-            Ui.text(host, "近 $heatDays 天", Ui.T.SUB, Ui.DIM)
+            Ui.text(host, "练习概览", Ui.T.SUB, Ui.DIM)
         )
         body.addView(Ui.text(host, "统计", Ui.T.H1, Ui.FG, true).apply { letterSpacing = -0.01f })
 
@@ -81,7 +82,7 @@ class PageStats(private val host: MainActivity) {
             buildSummary(practicedDays, elapsed, monthCount, streak, totalTimes, totalPhrases, byDay),
             W.margin(host, top = 14)
         )
-        body.addView(buildHeatmap(byDay), W.margin(host, top = 12))
+        body.addView(buildMonthHeatmap(byDay), W.margin(host, top = 12))
         body.addView(buildTop(top), W.margin(host, top = 16))
 
         // 同短语页：旧 scrollY 可能超出新内容高度，越界就是一片空白
@@ -218,54 +219,83 @@ class PageStats(private val host: MainActivity) {
         return col
     }
 
-    private fun buildHeatmap(byDay: Map<String, Int>): View {
-        val card = W.card(host).apply { setPadding(dp(16), dp(15), dp(16), dp(13)) }
+    /**
+     * 本月日历视图：每天一格、格上带日期数字，按当天练习次数着色。
+     * 之前是 91 天无标注矩阵，用户不知道每个方块是哪天 —— 日历一眼就能对上号。
+     */
+    private fun buildMonthHeatmap(byDay: Map<String, Int>): View {
+        val card = W.card(host).apply { setPadding(dp(16), dp(15), dp(16), dp(15)) }
+        val today = Fmt.today()
+        val monthStart = today.withDayOfMonth(1)
+        val daysInMonth = monthStart.lengthOfMonth()
+
+        val data = HashMap<LocalDate, Int>()
+        for ((k, v) in byDay) {
+            runCatching { LocalDate.parse(k) }.getOrNull()?.let { data[it] = v }
+        }
 
         val head = LinearLayout(host).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
         head.addView(
-            Ui.text(host, "练习记录", Ui.T.SUB, Ui.FG, true),
+            Ui.text(host, "本月练习", Ui.T.SUB, Ui.FG, true),
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         )
-        head.addView(Ui.text(host, "颜色越深练得越多", Ui.T.CAP, Ui.MUTED))
+        head.addView(Ui.text(host, "${today.monthValue} 月 · 按次数着色", Ui.T.CAP, Ui.MUTED))
         card.addView(head)
 
-        val data = HashMap<LocalDate, Int>()
-        for ((k, v) in byDay) {
-            runCatching { LocalDate.parse(k) }.getOrNull()?.let { data[it] = v }
+        // 周一 → 周日 的表头
+        val wk = LinearLayout(host).apply { orientation = LinearLayout.HORIZONTAL }
+        for (label in listOf("一", "二", "三", "四", "五", "六", "日")) {
+            wk.addView(
+                Ui.text(host, label, Ui.T.CAP, Ui.MUTED).apply { gravity = Gravity.CENTER },
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            )
         }
-        card.addView(
-            HeatmapView(host).apply {
-                setData(data, heatDays)
-                layoutParams = LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT
-                ).apply { topMargin = dp(12) }
-            }
-        )
+        card.addView(wk, W.margin(host, top = 12))
 
-        val legend = LinearLayout(host).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.END or Gravity.CENTER_VERTICAL
-        }
-        legend.addView(
-            Ui.text(host, "少", Ui.T.CAP, Ui.MUTED).apply {
-                setPadding(0, 0, dp(5), 0)
-            }
-        )
-        val soft = floatArrayOf(0.0f, 0.28f, 0.58f, 1.0f)
-        for (t in soft) {
-            legend.addView(View(host).apply {
-                setBackgroundColor(blend(Ui.SURFACE_2, Ui.GOOD, t))
-                layoutParams = LinearLayout.LayoutParams(dp(9), dp(9)).apply {
-                    rightMargin = dp(4)
+        // 日期网格：1 号前置空位，每格 38dp 高、7 等分宽
+        val grid = LinearLayout(host).apply { orientation = LinearLayout.VERTICAL }
+        var day = 1 - (monthStart.dayOfWeek.value - 1) // 周一=1 → 前置 0 个空位
+        while (day <= daysInMonth) {
+            val row = LinearLayout(host).apply { orientation = LinearLayout.HORIZONTAL }
+            for (c in 0 until 7) {
+                val d = day + c
+                val p = LinearLayout.LayoutParams(0, dp(38), 1f).apply {
+                    if (c < 6) marginEnd = dp(3)
                 }
-            })
+                if (d < 1 || d > daysInMonth) {
+                    row.addView(View(host), p)
+                    continue
+                }
+                val date = monthStart.plusDays((d - 1).toLong())
+                val n = data[date] ?: 0
+                val (bg, fg) = when {
+                    n == 0 -> Ui.SURFACE_2 to Ui.MUTED
+                    n <= 2 -> blend(Ui.SURFACE_2, Ui.GOOD, 0.30f) to Ui.FG
+                    n <= 4 -> blend(Ui.SURFACE_2, Ui.GOOD, 0.55f) to Ui.FG
+                    else -> Ui.GOOD to Ui.ON_PLAY
+                }
+                val cell = Ui.text(host, "$d", Ui.T.CAP, fg, n > 0).apply {
+                    gravity = Gravity.CENTER
+                    background = GradientDrawable().apply {
+                        setColor(bg)
+                        cornerRadius = dp(9).toFloat()
+                        if (date == today) setStroke(dp(2), Ui.ACCENT)
+                    }
+                }
+                row.addView(cell, p)
+            }
+            day += 7
+            grid.addView(
+                row,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply { topMargin = dp(3) }
+            )
         }
-        legend.addView(Ui.text(host, "多", Ui.T.CAP, Ui.MUTED))
-        card.addView(legend, W.margin(host, top = 10))
+        card.addView(grid, W.margin(host, top = 3))
         return card
     }
 
