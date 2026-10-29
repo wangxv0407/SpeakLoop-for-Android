@@ -40,6 +40,9 @@ class PagePhrases(private val host: MainActivity) {
     private lateinit var body: LinearLayout
     private val collapsed = mutableSetOf("week", "older")
 
+    /** 列表筛选：0 全部 / 1 没练过 / 2 已练 */
+    private var filter = 0
+
     private fun dp(v: Int) = host.dp(v)
 
     init {
@@ -79,17 +82,34 @@ class PagePhrases(private val host: MainActivity) {
         if (phrases.isEmpty()) {
             body.addView(buildEmpty(), W.margin(host, top = 60))
         } else {
-            body.addView(
-                buildLibraryLabel(total),
-                W.margin(host, top = 18)
-            )
-            renderGroups(phrases)
-            body.addView(
-                Ui.text(host, "点开可跟读 · 长按可删除", Ui.T.CAP, Ui.MUTED).apply {
-                    gravity = Gravity.CENTER
-                },
-                W.margin(host, top = 14)
-            )
+            body.addView(buildFilterRow(), W.margin(host, top = 14))
+            val shown = when (filter) {
+                1 -> phrases.filter { it.playCount == 0 }
+                2 -> phrases.filter { it.playCount > 0 }
+                else -> phrases
+            }
+            if (shown.isEmpty()) {
+                body.addView(
+                    Ui.text(
+                        host,
+                        if (filter == 1) "没有没练过的了，去「复习」走一轮" else "还没有练过的",
+                        Ui.T.SUB, Ui.MUTED
+                    ).apply { gravity = Gravity.CENTER },
+                    W.margin(host, top = 24)
+                )
+            } else {
+                body.addView(
+                    buildLibraryLabel(shown.size),
+                    W.margin(host, top = 18)
+                )
+                renderGroups(shown)
+                body.addView(
+                    Ui.text(host, "点开可跟读 · 长按可删除", Ui.T.CAP, Ui.MUTED).apply {
+                        gravity = Gravity.CENTER
+                    },
+                    W.margin(host, top = 14)
+                )
+            }
         }
         // 恢复滚动位置时必须按新内容高度夹一下：页面切走期间复习会改 play_count，
         // 列表按次数重排、总高度变了，旧的 scrollY 可能已经落在内容之外 —— 那一片就是空白。
@@ -134,6 +154,11 @@ class PagePhrases(private val host: MainActivity) {
 
     // ---------- 今日进度卡 ----------
 
+    /**
+     * 今日目标卡：三行 —— 标签+数值 / 进度条 / 提示+去复习。
+     * 原来的大数字 + 圆环 + 三格统计占了大半屏，列表被挤到第二屏；
+     * 换成这条窄卡之后首屏能多露一条短语，关键信息一条不少。
+     */
     private fun buildProgressCard(todayCount: Int, goal: Int, phrases: List<Phrase>): View {
         val card = W.card(host).apply { setPadding(dp(16), dp(15), dp(16), dp(15)) }
 
@@ -142,67 +167,91 @@ class PagePhrases(private val host: MainActivity) {
             gravity = Gravity.CENTER_VERTICAL
         }
         top.addView(
-            Ui.text(host, "今日已练", Ui.T.SUB, Ui.DIM),
+            Ui.text(host, "今日目标", Ui.T.SUB, Ui.DIM),
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         )
-        top.addView(Ui.text(host, "目标 $goal 条", Ui.T.CAP, Ui.MUTED))
+        top.addView(Ui.text(host, "$todayCount / $goal 条", Ui.T.SUB, Ui.FG, true))
         card.addView(top)
 
-        val middle = LinearLayout(host).apply {
+        // 进度条：达成了就整条变绿，跟「播放/跟读」的语义一致
+        val frac = (todayCount.toFloat() / goal.coerceAtLeast(1)).coerceIn(0f, 1f)
+        val bar = LinearLayout(host).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(10), 0, 0)
+            background = Ui.shape(host, 3, Ui.SURFACE_2)
+        }
+        if (frac > 0f) {
+            bar.addView(View(host).apply {
+                setBackgroundColor(if (frac >= 1f) Ui.GOOD else Ui.ACCENT)
+                layoutParams = LinearLayout.LayoutParams(0, dp(6), frac)
+            })
+        }
+        if (frac < 1f) {
+            bar.addView(View(host).apply {
+                layoutParams = LinearLayout.LayoutParams(0, dp(6), 1f - frac)
+            })
+        }
+        card.addView(bar)
+
+        val bottom = LinearLayout(host).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(12), 0, 0)
         }
-        middle.addView(bigCount(todayCount, goal))
-
-        val ring = RingView(host).apply {
-            thicknessDp = 7f
-            labelSizeDp = 12f
-            labelText = "${(todayCount * 100 / goal.coerceAtLeast(1)).coerceAtMost(100)}%"
-            progress = todayCount.toFloat() / goal.coerceAtLeast(1)
-            layoutParams = LinearLayout.LayoutParams(dp(54), dp(54)).apply { leftMargin = dp(16) }
-        }
-        middle.addView(ring)
-
-        val tip = LinearLayout(host).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), 0, 0, 0)
-        }
-        val left = goal - todayCount
-        tip.addView(
+        val left = (goal - todayCount).coerceAtLeast(0)
+        bottom.addView(
             Ui.text(
                 host,
-                if (left > 0) "再练 $left 条" else "今天已达成",
-                11f,
+                if (left > 0) "还有 $left 条就达成" else "今天已达成",
+                Ui.T.SUB,
                 if (left > 0) Ui.DIM else Ui.GOOD
-            )
+            ),
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         )
-        tip.addView(
-            Ui.text(host, if (left > 0) "就达成今天" else "干得不错", Ui.T.CAP, Ui.MUTED)
-                .apply { setPadding(0, dp(2), 0, 0) }
+        bottom.addView(
+            Ui.text(host, "去复习 →", Ui.T.SUB, Ui.ACCENT, true).apply {
+                isClickable = true
+                setOnClickListener { host.goTab(2) }
+            }
         )
-        middle.addView(tip)
-        card.addView(middle, W.margin(host, top = 6))
+        card.addView(bottom)
 
-        card.addView(View(host).apply {
-            setBackgroundColor(Ui.STROKE)
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1).apply {
-            topMargin = dp(13)
-        })
-
-        val stats = LinearLayout(host).apply {
-            orientation = LinearLayout.HORIZONTAL
-        }
+        // 原来三格统计的信息合并成一行小字，不丢数据也不占地
         val today = Fmt.today()
         val weekStart = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
         val thisWeek = phrases.count {
             val d = dateOf(it)
             !d.isBefore(weekStart) && !d.isAfter(today)
         }
-        stats.addView(statCell("本周", "+$thisWeek 条"), cellParams(1f))
-        stats.addView(statCell("连续", "${streakOf(phrases)} 天"), cellParams(1f))
-        stats.addView(statCell("总计", "${phrases.size} 条"), cellParams(1f))
-        card.addView(stats, W.margin(host, top = 10))
+        card.addView(View(host).apply {
+            setBackgroundColor(Ui.STROKE)
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1).apply {
+            topMargin = dp(13)
+        })
+        card.addView(
+            Ui.text(
+                host,
+                "本周 +$thisWeek 条 · 连续 ${streakOf(phrases)} 天 · 共 ${phrases.size} 条",
+                Ui.T.CAP, Ui.MUTED
+            ),
+            W.margin(host, top = 10)
+        )
         return card
+    }
+
+    /** 筛选胶囊：0 全部 / 1 没练过 / 2 已练。短语过百之后靠它找人。 */
+    private fun buildFilterRow(): View {
+        val row = LinearLayout(host).apply { orientation = LinearLayout.HORIZONTAL }
+        listOf("全部", "没练过", "已练").forEachIndexed { i, label ->
+            val pill = Ui.pill(host, label, filter == i) {
+                if (filter != i) {
+                    filter = i
+                    refresh()
+                }
+            }
+            if (i > 0) row.addView(pill, W.margin(host, left = 8)) else row.addView(pill)
+        }
+        return row
     }
 
     private fun cellParams(weight: Float) = LinearLayout.LayoutParams(

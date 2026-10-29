@@ -78,7 +78,7 @@ class PageStats(private val host: MainActivity) {
         body.addView(Ui.text(host, "统计", Ui.T.H1, Ui.FG, true).apply { letterSpacing = -0.01f })
 
         body.addView(
-            buildSummary(practicedDays, elapsed, monthCount, streak, totalTimes, totalPhrases),
+            buildSummary(practicedDays, elapsed, monthCount, streak, totalTimes, totalPhrases, byDay),
             W.margin(host, top = 14)
         )
         body.addView(buildHeatmap(byDay), W.margin(host, top = 12))
@@ -97,36 +97,21 @@ class PageStats(private val host: MainActivity) {
         monthCount: Int,
         streak: Int,
         totalTimes: Int,
-        totalPhrases: Int
+        totalPhrases: Int,
+        byDay: Map<String, Int>
     ): View {
         val card = W.card(host).apply { setPadding(dp(16), dp(16), dp(16), dp(16)) }
 
-        val rate = if (elapsed > 0) practicedDays.toFloat() / elapsed else 0f
-        val row = LinearLayout(host).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        row.addView(RingView(host).apply {
-            thicknessDp = 8f
-            labelSizeDp = 15f
-            progress = rate
-            labelText = "${(rate * 100).toInt()}%"
-            layoutParams = LinearLayout.LayoutParams(dp(70), dp(70))
-        })
-
-        val right = LinearLayout(host).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), 0, 0, 0)
-        }
-        right.addView(Ui.text(host, "本月已练", Ui.T.CAP, Ui.DIM))
-        right.addView(
-            Ui.text(host, "$monthCount 条", 20f, Ui.FG, true).apply { setPadding(0, dp(2), 0, 0) }
+        // 两个 KPI 并排：连续打卡用绿色，和播放态一个语义 —— 都表示「这件事在持续」
+        val row = LinearLayout(host).apply { orientation = LinearLayout.HORIZONTAL }
+        row.addView(
+            kpi("本月已练", "$monthCount 条", Ui.FG),
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         )
-        right.addView(
-            Ui.text(host, "$elapsed 天里打卡 $practicedDays 天", Ui.T.CAP, Ui.MUTED)
-                .apply { setPadding(0, dp(3), 0, 0) }
+        row.addView(
+            kpi("连续打卡", "$streak 天", Ui.GOOD),
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         )
-        row.addView(right, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         card.addView(row)
 
         card.addView(View(host).apply { setBackgroundColor(Ui.STROKE) },
@@ -134,22 +119,92 @@ class PageStats(private val host: MainActivity) {
                 topMargin = dp(14)
             })
 
-        val stats = LinearLayout(host).apply { orientation = LinearLayout.HORIZONTAL }
-        stats.addView(cell("连续天数", "$streak 天"), weight())
-        stats.addView(
-            cell("平均每天", String.format("%.1f 条", if (elapsed > 0) monthCount.toFloat() / elapsed else 0f)),
-            weight()
+        // 8 周趋势 + 一行明细小字，原 RingView 占 70dp 高只表达一个百分比，性价比太低
+        card.addView(
+            Ui.text(host, "近 8 周趋势", Ui.T.SUB, Ui.FG, true),
+            W.margin(host, top = 13)
         )
-        stats.addView(cell("练习次数", "$totalTimes 次"), weight())
-        card.addView(stats, W.margin(host, top = 11))
+        card.addView(buildTrend(byDay), W.margin(host, top = 4))
+        card.addView(
+            Ui.text(
+                host,
+                "本月共 $totalTimes 次 · 平均每天 ${
+                    String.format("%.1f", if (elapsed > 0) monthCount.toFloat() / elapsed else 0f)
+                } 条 · 打卡 $practicedDays/$elapsed 天",
+                Ui.T.CAP, Ui.MUTED
+            ),
+            W.margin(host, top = 10)
+        )
 
         if (totalPhrases == 0) {
             card.addView(
                 Ui.text(host, "短语库还是空的，先去加一条", Ui.T.CAP, Ui.MUTED)
-                    .apply { setPadding(0, dp(10), 0, 0) }
+                    .apply { setPadding(0, dp(8), 0, 0) }
             )
         }
         return card
+    }
+
+    private fun kpi(label: String, value: String, color: Int): View {
+        val col = LinearLayout(host).apply { orientation = LinearLayout.VERTICAL }
+        col.addView(Ui.text(host, label, Ui.T.CAP, Ui.MUTED))
+        col.addView(
+            Ui.text(host, value, Ui.T.TITLE, color, true).apply { setPadding(0, dp(4), 0, 0) }
+        )
+        return col
+    }
+
+    /**
+     * 近 8 周的练习次数柱状图。每周高度 = 该周 play_log 行数 / 最高周。
+     * 最后一周没过完，只算到今天，避免「这周突然变矮」的错觉。
+     */
+    private fun buildTrend(byDay: Map<String, Int>): View {
+        val today = Fmt.today()
+        val thisMonday = today.with(java.time.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY))
+        val weeks = (7 downTo 0).map { w ->
+            val end = thisMonday.minusWeeks(w.toLong())
+            val realEnd = if (end.isAfter(today)) today else end
+            val start = end.minusDays(6)
+            var sum = 0
+            var d = start
+            while (!d.isAfter(realEnd)) {
+                sum += byDay[d.toString()] ?: 0
+                d = d.plusDays(1)
+            }
+            sum
+        }
+        val maxV = weeks.maxOrNull()?.coerceAtLeast(1) ?: 1
+
+        val barH = dp(52)
+        val row = LinearLayout(host).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.BOTTOM
+        }
+        weeks.forEachIndexed { i, v ->
+            val col = LinearLayout(host).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.BOTTOM
+            }
+            val h = if (v > 0) {
+                ((v.toFloat() / maxV) * barH).toInt().coerceAtLeast(dp(3))
+            } else dp(2)
+            col.addView(View(host).apply {
+                setBackgroundColor(
+                    if (i == weeks.size - 1) Ui.ACCENT
+                    else blend(Ui.SURFACE_2, Ui.ACCENT, 0.45f)
+                )
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, h
+                )
+            })
+            row.addView(
+                col,
+                LinearLayout.LayoutParams(0, barH, 1f).apply {
+                    if (i < weeks.size - 1) marginEnd = dp(6)
+                }
+            )
+        }
+        return row
     }
 
     private fun weight() = LinearLayout.LayoutParams(

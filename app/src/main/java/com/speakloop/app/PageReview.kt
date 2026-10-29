@@ -46,6 +46,12 @@ class PageReview(private val host: MainActivity) : ReviewBus.Listener {
 
     /** 主按钮当前是不是「播放中」的绿色皮肤，只在状态翻转时重建背景，避免每 100ms 抖一次 */
     private var playSkin = false
+
+    /** 待机 / 播放两套容器互斥显示，结构完全不同，比在一个容器里抠显隐干净得多 */
+    private lateinit var readyBox: LinearLayout
+    private lateinit var readyTitle: TextView
+    private lateinit var readySub: TextView
+    private lateinit var playBox: LinearLayout
     private lateinit var stopBtn: ImageView
     private lateinit var prevBtn: ImageView
     private lateinit var nextBtn: ImageView
@@ -68,7 +74,30 @@ class PageReview(private val host: MainActivity) : ReviewBus.Listener {
 
     fun refresh() {
         renderChips()
+        refreshReady()
         onReviewState(ReviewBus.state)
+    }
+
+    /** 待机页的计数。只查一次库，不放 render：那是每 100ms 跑一次的。 */
+    private fun refreshReady() {
+        if (!::readyTitle.isInitialized) return
+        val db = Db(host)
+        try {
+            val added = db.addedOn(d2ms(selectedDay), d2ms(selectedDay.plusDays(1)))
+            val due = if (host.prefs.getBoolean("includeDue", true)) {
+                val ids = added.map { it.id }.toSet()
+                db.neverPlayed().count { it.id !in ids }
+            } else 0
+            val total = added.size + due
+            readyTitle.text = if (selectedDay.isEqual(Fmt.today())) {
+                if (total == 0) "今天还没有可练的" else "今天 $total 条待复习"
+            } else {
+                "${Fmt.friendly(selectedDay)} · $total 条"
+            }
+            readySub.text = "新增 ${added.size} 条 · 待复习 $due 条"
+        } finally {
+            db.close()
+        }
     }
 
     // ---------- 骨架 ----------
@@ -80,8 +109,47 @@ class PageReview(private val host: MainActivity) : ReviewBus.Listener {
         }
 
         root.addView(buildTop())
-        root.addView(buildCard(), W.margin(host, top = 12))
-        root.addView(buildLineList(), LinearLayout.LayoutParams(
+
+        // ---------- 待机容器：中央大圆 + 计数，一眼知道从哪开始 ----------
+        readyBox = LinearLayout(host).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+        }
+        val ringWrap = LinearLayout(host).apply {
+            gravity = Gravity.CENTER
+            background = Ui.shape(host, 999, Ui.GOOD_SOFT)
+            layoutParams = LinearLayout.LayoutParams(dp(152), dp(152))
+        }
+        val ringCore = LinearLayout(host).apply {
+            gravity = Gravity.CENTER
+            background = Ui.ripple(host, 999, Ui.GOOD)
+            layoutParams = LinearLayout.LayoutParams(dp(124), dp(124))
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { startRound() }
+        }
+        ringCore.addView(Ui.icon(host, R.drawable.ic_play, Ui.ON_PLAY, 46))
+        ringWrap.addView(ringCore)
+        readyBox.addView(ringWrap)
+
+        readyTitle = Ui.text(host, "", Ui.T.TITLE, Ui.FG, true).apply {
+            gravity = Gravity.CENTER
+            setPadding(0, dp(20), 0, 0)
+        }
+        readyBox.addView(readyTitle)
+        readySub = Ui.text(host, "", Ui.T.SUB, Ui.DIM).apply {
+            gravity = Gravity.CENTER
+            setPadding(0, dp(6), 0, 0)
+        }
+        readyBox.addView(readySub)
+        root.addView(readyBox, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
+        ))
+
+        // ---------- 播放容器：卡片 + 行清单 + 底部操作 ----------
+        playBox = LinearLayout(host).apply { orientation = LinearLayout.VERTICAL }
+        playBox.addView(buildCard(), W.margin(host, top = 12))
+        playBox.addView(buildLineList(), LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
         ).apply { topMargin = dp(10) })
 
@@ -89,8 +157,12 @@ class PageReview(private val host: MainActivity) : ReviewBus.Listener {
             gravity = Gravity.CENTER
             setPadding(0, dp(8), 0, 0)
         }
-        root.addView(stateLine)
-        root.addView(buildPlayButton(), W.margin(host, top = 10))
+        playBox.addView(stateLine)
+        playBox.addView(buildPlayButton(), W.margin(host, top = 10))
+        root.addView(playBox, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
+        ))
+
         hint = Ui.text(host, "点开始，锁屏也会继续读", Ui.T.CAP, Ui.MUTED).apply {
             gravity = Gravity.CENTER
         }
@@ -399,6 +471,10 @@ class PageReview(private val host: MainActivity) : ReviewBus.Listener {
     override fun onReviewState(s: ReviewBus.State) {
         if (!::counter.isInitialized) return
 
+        // 待机 / 播放两套骨架互斥
+        readyBox.visibility = if (s.running) View.GONE else View.VISIBLE
+        playBox.visibility = if (s.running) View.VISIBLE else View.GONE
+
         // 顶栏
         if (s.running && s.phraseTotal > 0) {
             counter.text = "第 ${s.phraseIndex} / ${s.phraseTotal} 条"
@@ -457,6 +533,8 @@ class PageReview(private val host: MainActivity) : ReviewBus.Listener {
             val fg = if (s.running) Ui.ON_PLAY else Ui.ON_SOLID
             playIcon.imageTintList = android.content.res.ColorStateList.valueOf(fg)
             playLabel.setTextColor(fg)
+            // 播完回到待机时，计数变了（这轮练过的不该再算待复习）
+            if (!s.running) refreshReady()
         }
         if (s.running) {
             playIcon.setImageResource(

@@ -244,13 +244,50 @@ class MainActivity : AppCompatActivity() {
 
     // ---------- 新增短语 ----------
 
+    /**
+     * 新增短语：底部弹层，不再是居中 AlertDialog。
+     *
+     * 原来的居中弹窗有两个实际痛点：键盘一弹就被顶到屏幕上半部，输入框离拇指很远；
+     * 「保存」在右上角，单手根本够不到。底部弹层贴着键盘上沿生长，
+     * 输入框和保存键始终落在拇指热区里。
+     */
     fun showAddDialog() {
+        val dialog = android.app.Dialog(this)
+        dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
+
+        val r = dp(20).toFloat()
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(2), dp(20), dp(2))
+            setPadding(dp(20), dp(10), dp(20), dp(22))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(Ui.SURFACE)
+                // 只圆上面两角，底部贴屏幕边缘
+                cornerRadii = floatArrayOf(r, r, r, r, 0f, 0f, 0f, 0f)
+            }
         }
 
+        box.addView(
+            View(this).apply { setBackgroundColor(Ui.STROKE) },
+            LinearLayout.LayoutParams(dp(36), dp(4)).apply { gravity = Gravity.CENTER_HORIZONTAL }
+        )
+        box.addView(
+            Ui.text(this, "添加短语", Ui.T.TITLE, Ui.FG, true),
+            W.margin(this, top = 14)
+        )
+
         val input = W.input(this, "例如 Forgive me for", "")
+        input.background = Ui.shape(this, 12, Ui.SURFACE_2, 1, Ui.ACCENT)
+        input.setPadding(dp(14), dp(14), dp(14), dp(14))
+        box.addView(input, W.margin(this, top = 12))
+
+        box.addView(
+            Ui.button(this, "说一遍", R.drawable.ic_mic, false) {
+                speechTarget = input
+                startVoiceInput()
+            },
+            W.margin(this, top = 12)
+        )
+
         val hasKey = prefs.getString("apiKey", "").orEmpty().isNotBlank()
         val autoFill = CheckBox(this).apply {
             text = "用 AI 补全释义和例句"
@@ -260,39 +297,37 @@ class MainActivity : AppCompatActivity() {
             buttonTintList = ColorStateList.valueOf(Ui.ACCENT)
             setPadding(0, dp(12), 0, 0)
         }
-
-        box.addView(input)
-        box.addView(
-            Ui.button(this, "说一遍", R.drawable.ic_mic, false) {
-                speechTarget = input
-                startVoiceInput()
-            },
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = dp(10) }
-        )
         box.addView(autoFill)
 
-        val dialog = AlertDialog.Builder(this)
-            .setTitle("添加短语")
-            .setView(box)
-            .setPositiveButton("保存", null)
-            .setNegativeButton("取消", null)
-            .create()
-        dialog.setOnShowListener {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                val text = input.text.toString().trim()
-                if (text.isEmpty()) {
-                    input.error = "先写一个短语"
-                    return@setOnClickListener
-                }
+        val actions = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val cancel = Ui.button(this, "取消", null, false) { dialog.dismiss() }
+        val save = Ui.button(this, "保存", null, true) {
+            val text = input.text.toString().trim()
+            if (text.isEmpty()) {
+                input.error = "先写一个短语"
+            } else {
                 dialog.dismiss()
                 savePhrase(text, autoFill.isChecked)
             }
         }
+        actions.addView(cancel, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        actions.addView(save, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+            marginStart = dp(10)
+        })
+        box.addView(actions, W.margin(this, top = 16))
+
+        dialog.setContentView(box)
+        dialog.window?.apply {
+            setBackgroundDrawableResource(android.R.color.transparent)
+            setGravity(Gravity.BOTTOM)
+            // 左右留 12dp，让弹层和屏幕边缘之间能透出一点底色
+            val w = resources.displayMetrics.widthPixels - dp(24)
+            setLayout(w, android.view.WindowManager.LayoutParams.WRAP_CONTENT)
+        }
         dialog.show()
-        Ui.roundDialog(dialog, this)
     }
 
     private fun savePhrase(text: String, useAi: Boolean) {
