@@ -285,7 +285,8 @@ object W {
         Ui.roundDialog(dialog, c)
     }
 
-    /** 白卡片容器，内容自己往里加。 */    fun card(c: Context, radiusDp: Int = 20): LinearLayout = LinearLayout(c).apply {
+    /** 白卡片容器，内容自己往里加。 */
+    fun card(c: Context, radiusDp: Int = 20): LinearLayout = LinearLayout(c).apply {
         orientation = LinearLayout.VERTICAL
         background = Ui.card(c, radiusDp)
     }
