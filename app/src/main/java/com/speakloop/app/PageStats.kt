@@ -160,7 +160,7 @@ class PageStats(private val host: MainActivity) {
      */
     private fun buildTrend(byDay: Map<String, Int>): View {
         val today = Fmt.today()
-        val thisMonday = today.with(java.time.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY))
+        val thisMonday = today.with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY))
         val weeks = (7 downTo 0).map { w ->
             val end = thisMonday.minusWeeks(w.toLong())
             val realEnd = if (end.isAfter(today)) today else end
