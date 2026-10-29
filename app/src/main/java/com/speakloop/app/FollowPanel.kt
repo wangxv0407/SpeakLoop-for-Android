@@ -45,6 +45,9 @@ class FollowPanel(
     private lateinit var stopBtn: TextView
     private lateinit var body: TextView
 
+    /** 面板自己的主线程 Handler：hideResult 的延时收起要靠它，Activity 上没有这些方法 */
+    private val ui = android.os.Handler(android.os.Looper.getMainLooper())
+
     private val reader = FollowReader(host)
     private var player: MediaPlayer? = null
 
@@ -153,7 +156,7 @@ class FollowPanel(
     fun show(phraseId: Long, text: String) {
         this.phraseId = phraseId
         words = Diff.normalize(text).size
-        host.removeCallbacks(hideResult)
+        ui.removeCallbacks(hideResult)
         view.visibility = View.VISIBLE
 
         if (host.checkSelfPermission(Manifest.permission.RECORD_AUDIO) !=
@@ -172,7 +175,7 @@ class FollowPanel(
     }
 
     fun hide() {
-        host.removeCallbacks(hideResult)
+        ui.removeCallbacks(hideResult)
         showingResult = false
         if (listening) {
             listening = false
@@ -183,7 +186,7 @@ class FollowPanel(
     }
 
     fun release() {
-        host.removeCallbacks(hideResult)
+        ui.removeCallbacks(hideResult)
         listening = false
         reader.release()
         stopPlayback()
@@ -193,7 +196,7 @@ class FollowPanel(
 
     private fun startListening() {
         stopPlayback()
-        host.removeCallbacks(hideResult)
+        ui.removeCallbacks(hideResult)
         listening = true
         showingResult = false
         lastResult = null
@@ -225,6 +228,8 @@ class FollowPanel(
             body.visibility = View.VISIBLE
             cancelBtn.text = "关闭"
             stopBtn.text = "重试"
+            cancelBtn.setOnClickListener { hide() }
+            stopBtn.setOnClickListener { retry() }
         }
     }
 
@@ -281,8 +286,8 @@ class FollowPanel(
         lastResult = r
         renderResult(r)
         onAdvance()
-        host.removeCallbacks(hideResult)
-        host.postDelayed(hideResult, RESULT_LINGER_MS)
+        ui.removeCallbacks(hideResult)
+        ui.postDelayed(hideResult, RESULT_LINGER_MS)
     }
 
     private fun cancel() {
@@ -360,7 +365,7 @@ class FollowPanel(
             p.start()
             player = p
         } catch (e: Exception) {
-            host.toast("回放失败")
+            android.widget.Toast.makeText(host, "回放失败", android.widget.Toast.LENGTH_SHORT).show()
         }
     }
 
