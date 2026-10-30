@@ -495,7 +495,11 @@ class PagePhrases(private val host: MainActivity) {
             .setTitle(p.phrase)
             .setItems(arrayOf("改原文和释义", "删除")) { _, which ->
                 if (which == 0) {
-                    W.editPhraseDialog(host, p) { refresh() }
+                    W.editPhraseDialog(host, p) {
+                        // 改过内容就允许详情页再自动补全一次（清空释义后尤其需要）
+                        DetailActivity.forgetAutoTranslate(p.id)
+                        refresh()
+                    }
                 } else {
                     confirmDelete(p)
                 }
@@ -517,6 +521,8 @@ class PagePhrases(private val host: MainActivity) {
                 } finally {
                     db.close()
                 }
+                // 短语没了，它那几条录音也没人再引用，一起清掉
+                FollowReader.purge(host, p.id)
                 refresh()
             }
             .setNegativeButton("取消", null)

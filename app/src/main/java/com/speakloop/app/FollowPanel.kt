@@ -74,6 +74,9 @@ class FollowPanel(
     var showingResult = false
         private set
 
+    /** 成绩入库后回调。详情页用它把「上次跟读」那一行刷成新数据 */
+    var onResultSaved: ((FollowReader.Result) -> Unit)? = null
+
     // ---------- 骨架 ----------
 
     private fun build(): View {
@@ -285,9 +288,36 @@ class FollowPanel(
         val r = reader.stop()
         lastResult = r
         renderResult(r)
+        saveResult(r)
         onAdvance()
         ui.removeCallbacks(hideResult)
         ui.postDelayed(hideResult, RESULT_LINGER_MS)
+    }
+
+    /**
+     * 成绩落库 + 回收旧录音。
+     *
+     * 结果卡 4.5 秒后就没影了，不存下来「上次比这次好多少」永远看不出来；
+     * 录音只留最近几条，成绩永久留着 —— 文件删了分数还在，只是回放不了。
+     */
+    private fun saveResult(r: FollowReader.Result?) {
+        if (r == null || r.ms < 300L) return
+        val file = r.file ?: return
+        try {
+            val db = Db(host)
+            try {
+                db.insertFollow(
+                    phraseId, r.ms, r.voicedMs, r.avgDb, r.wpm(words), file.absolutePath
+                )
+            } finally {
+                db.close()
+            }
+        } catch (e: Exception) {
+            // 写库失败不该影响这次跟读的显示，录音文件留着下次 prune 处理
+            return
+        }
+        FollowReader.prune(host, phraseId)
+        onResultSaved?.invoke(r)
     }
 
     private fun cancel() {

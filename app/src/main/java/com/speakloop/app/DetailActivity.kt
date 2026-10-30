@@ -2,6 +2,7 @@ package com.speakloop.app
 
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
+import android.media.MediaPlayer
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -17,6 +18,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -39,6 +41,16 @@ class DetailActivity : AppCompatActivity() {
          * 模型又一直返回空串时就会无限「补全 → 重建 → 再补全」。
          */
         private val autoTried = java.util.Collections.synchronizedSet(HashSet<Long>())
+
+        /**
+         * 内容被改过就重新允许自动补全。
+         *
+         * 清空释义是「我要新的」，换原文是「释义对不上了」—— 两种都得让那道
+         * 一次性门重新打开，否则用户改完看到的还是空释义。
+         */
+        fun forgetAutoTranslate(id: Long) {
+            autoTried.remove(id)
+        }
     }
 
     /** 顺序朗读的一步：读什么、多快、读完留多久、读的时候高亮哪个控件。 */
@@ -56,6 +68,10 @@ class DetailActivity : AppCompatActivity() {
     private lateinit var resultCard: View
     private lateinit var resultView: TextView
     private lateinit var voiceHint: TextView
+
+    /** 「上次跟读 8.6s · 语速 132 wpm ›」，点开看历史并逐条回放 */
+    private lateinit var lastFollow: TextView
+    private var replayPlayer: MediaPlayer? = null
     private lateinit var translatePillView: TextView
     private lateinit var phraseAnchor: TextView
     private lateinit var playIcon: ImageView
@@ -135,6 +151,8 @@ class DetailActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         if (::followPanel.isInitialized) followPanel.release()
+        replayPlayer?.release()
+        replayPlayer = null
         playing = false
         handler.removeCallbacksAndMessages(null)
         tts?.stop()
@@ -335,14 +353,104 @@ class DetailActivity : AppCompatActivity() {
             ViewGroup.LayoutParams.WRAP_CONTENT
         ).apply { topMargin = dp(12) })
 
+        // 成绩一行：结果卡 4.5 秒就收了，留个能反复看、能回放的入口
+        lastFollow = Ui.text(this, "", 11f, Ui.MUTED, true).apply {
+            setPadding(dp(2), dp(9), dp(2), 0)
+        }
+        col.addView(lastFollow)
+        followPanel.onResultSaved = { refreshLastFollow() }
+        refreshLastFollow()
+
         // 先说清楚「跟读到底干什么」，别让用户点完猜发生了什么
         voiceHint = Ui.text(this, voiceModeText(), 11f, Ui.MUTED).apply {
-            setPadding(dp(2), dp(10), dp(2), 0)
+            setPadding(dp(2), dp(8), dp(2), 0)
             setLineSpacing(dp(3).toFloat(), 1f)
         }
         col.addView(voiceHint)
         return col
     }
+
+    // ---------- 跟读成绩 ----------
+
+    /** 有记录就显示「上次」，没有就给一句预告 —— 别让这一行空着占位。 */
+    private fun refreshLastFollow() {
+        if (!::lastFollow.isInitialized) return
+        val db = Db(this)
+        val e = try {
+            db.lastFollow(phrase.id)
+        } finally {
+            db.close()
+        }
+        if (e == null) {
+            lastFollow.text = "跟读后会记下时长和语速"
+            lastFollow.setTextColor(Ui.MUTED)
+            lastFollow.isClickable = false
+            lastFollow.setOnClickListener(null)
+            return
+        }
+        lastFollow.text =
+            "上次 ${secsOf(e.ms)} · 语速 ${e.wpm} wpm · 发声 " +
+                "${(e.voicedRatio * 100).toInt()}% ›"
+        lastFollow.setTextColor(Ui.ACCENT)
+        lastFollow.isClickable = true
+        lastFollow.setOnClickListener { showFollowHistory() }
+    }
+
+    private fun showFollowHistory() {
+        val db = Db(this)
+        val list = try {
+            db.follows(phrase.id, 12)
+        } finally {
+            db.close()
+        }
+        if (list.isEmpty()) {
+            toast("还没有跟读记录，点「跟读」说一句")
+            return
+        }
+        val labels = list.map { e ->
+            "${stampOf(e.at)} · ${secsOf(e.ms)} · 发声 " +
+                "${(e.voicedRatio * 100).toInt()}% · ${e.wpm} wpm"
+        }.toTypedArray()
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("跟读记录 · 点一条回放")
+            .setItems(labels) { _, which -> replay(list[which]) }
+            .setNegativeButton("关闭", null)
+            .create()
+        dialog.show()
+        Ui.roundDialog(dialog, this)
+    }
+
+    /**
+     * 回放某次录音。文件按「每条短语留最近几段」被回收掉了，
+     * 这时成绩还在、录音没了 —— 给句人话，别静默失败。
+     */
+    private fun replay(e: FollowEntry) {
+        val f = if (e.file.isBlank()) null else File(e.file)
+        if (f == null || !f.exists()) {
+            toast("这段录音已清理，成绩还在")
+            return
+        }
+        replayPlayer?.release()
+        replayPlayer = null
+        try {
+            val p = MediaPlayer()
+            p.setDataSource(f.absolutePath)
+            p.setOnCompletionListener {
+                it.release()
+                if (replayPlayer === it) replayPlayer = null
+            }
+            p.prepare()
+            p.start()
+            replayPlayer = p
+        } catch (ex: Exception) {
+            toast("回放失败")
+        }
+    }
+
+    private fun secsOf(ms: Long): String = String.format(Locale.CHINA, "%.1fs", ms / 1000f)
+
+    private fun stampOf(ms: Long): String =
+        SimpleDateFormat("M月d日 HH:mm", Locale.CHINA).format(Date(ms))
 
     /** 跟读只要麦克风，不需要联网、不需要系统语音识别 —— 华为上也能用。 */
     private fun voiceModeText(): String =
@@ -535,7 +643,7 @@ class DetailActivity : AppCompatActivity() {
      * 没配 AI 也要显示出来——否则用户只看到一堆英文，根本不知道还能补。
      */
     private fun translatePill(): TextView {
-        val label = if (hasApiKey()) "＋ 补全中文释义" else "例句还缺中文 · 点这里看怎么开"
+        val label = if (hasApiKey()) "＋ 补全中文释义" else "中文还没补全 · 点这里看怎么开"
         val color = if (hasApiKey()) Ui.ACCENT else Ui.WARN
         translatePillView = Ui.text(this, label, 12f, color, true).apply {
             setPadding(dp(12), dp(8), dp(12), dp(8))
@@ -551,7 +659,7 @@ class DetailActivity : AppCompatActivity() {
             val dialog = AlertDialog.Builder(this)
                 .setTitle("中文释义要靠 AI 翻译")
                 .setMessage(
-                    "例句和情景对话的中文是调用 AI 现翻的，需要先填一个 API Key。\n\n" +
+                    "释义、例句和情景对话的中文都是调用 AI 现翻的，需要先填一个 API Key。\n\n" +
                         "底部「设置」→「AI 补全」：\n" +
                         "· Base URL：${Llm.DEFAULT_BASE}\n" +
                         "· API Key：你的 sk- 开头密钥\n" +
@@ -675,7 +783,8 @@ class DetailActivity : AppCompatActivity() {
     private fun hasApiKey(): Boolean = prefs.getString("apiKey", "").orEmpty().isNotBlank()
 
     private fun needsTranslation(): Boolean =
-        phrase.examples.any { it.cn.isBlank() } || phrase.dialogue.any { it.cn.isBlank() }
+        phrase.meaning.isBlank() ||
+            phrase.examples.any { it.cn.isBlank() } || phrase.dialogue.any { it.cn.isBlank() }
 
     /**
      * 进页面就自动补一次中文，不再让用户自己找那个小胶囊。
@@ -697,6 +806,10 @@ class DetailActivity : AppCompatActivity() {
      */
     private fun translateNow(auto: Boolean) {
         val pending = ArrayList<String>()
+        // 释义空着就把原文排在最前：清空释义就是「我要新的」，这一处比补例句更要紧。
+        // 以前这里只看例句和对话，meaning 空了根本没路可走。
+        val needMeaning = phrase.meaning.isBlank()
+        if (needMeaning) pending.add(phrase.phrase)
         phrase.examples.forEach { if (it.cn.isBlank()) pending.add(it.text) }
         phrase.dialogue.forEach { if (it.cn.isBlank()) pending.add(it.text) }
         if (pending.isEmpty()) return
@@ -705,7 +818,7 @@ class DetailActivity : AppCompatActivity() {
             translatePillView.text = "正在补全中文…"
             translatePillView.setTextColor(Ui.DIM)
         }
-        if (!auto) toast("正在让 AI 翻译这 ${pending.size} 句……")
+        if (!auto) toast("正在让 AI 补全 ${pending.size} 处中文……")
 
         thread {
             var out: List<String>? = null
@@ -733,13 +846,15 @@ class DetailActivity : AppCompatActivity() {
                 }
 
                 var k = 0
+                val newMeaning = if (needMeaning) got.getOrNull(k++).orEmpty() else phrase.meaning
                 val newExamples = phrase.examples.map { e ->
                     if (e.cn.isBlank()) e.copy(cn = got.getOrNull(k++).orEmpty()) else e
                 }
                 val newDialogue = phrase.dialogue.map { l ->
                     if (l.cn.isBlank()) l.copy(cn = got.getOrNull(k++).orEmpty()) else l
                 }
-                val changed = newExamples != phrase.examples || newDialogue != phrase.dialogue
+                val changed = newMeaning != phrase.meaning ||
+                    newExamples != phrase.examples || newDialogue != phrase.dialogue
                 if (!changed) {
                     // 模型什么都没给，别再 recreate 一遍，否则会无限循环
                     if (::translatePillView.isInitialized) {
@@ -752,7 +867,7 @@ class DetailActivity : AppCompatActivity() {
 
                 val db = Db(this)
                 try {
-                    db.updateContent(phrase.id, phrase.meaning, newExamples, newDialogue)
+                    db.updateContent(phrase.id, newMeaning, newExamples, newDialogue)
                 } finally {
                     db.close()
                 }
@@ -769,7 +884,12 @@ class DetailActivity : AppCompatActivity() {
      * 否则改完点「朗读全部」还在读旧句子。
      */
     private fun editPhrase() {
-        W.editPhraseDialog(this, phrase) { recreate() }
+        W.editPhraseDialog(this, phrase) {
+            // 改完先把自动补全那道门重新打开，否则 recreate 进来的
+            // maybeAutoTranslate 会被 autoTried 挡住，清空的释义就一直是空的
+            forgetAutoTranslate(phrase.id)
+            recreate()
+        }
     }
 
     private fun confirmDelete() {
@@ -783,6 +903,8 @@ class DetailActivity : AppCompatActivity() {
                 } finally {
                     db.close()
                 }
+                // 短语没了，它那几条录音也没人再引用，一起清掉
+                FollowReader.purge(this, phrase.id)
                 finish()
             }
             .setNegativeButton("取消", null)

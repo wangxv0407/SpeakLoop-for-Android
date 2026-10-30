@@ -16,6 +16,24 @@ import java.time.ZoneId
 data class DayCount(val date: LocalDate, val count: Int)
 
 /**
+ * 一次跟读的成绩。
+ *
+ * [file] 只是当时的录音路径，文件被清掉或超过保留数量后照样能看分数，只是回放不了。
+ * 所以「成绩」和「录音」是两件事：前者永久留着，后者只管最近几条。
+ */
+data class FollowEntry(
+    val id: Long,
+    val at: Long,
+    val ms: Long,
+    val voicedMs: Long,
+    val avgDb: Float,
+    val wpm: Int,
+    val file: String
+) {
+    val voicedRatio: Float get() = if (ms <= 0L) 0f else voicedMs.toFloat() / ms
+}
+
+/**
  * 单文件 SQLite。
  *
  * 例句和对话序列化成 JSON 存在 `phrase` 一行里，不用建三张表，也就没有跨表一致性问题。
@@ -29,7 +47,7 @@ class Db(context: Context) :
     SQLiteOpenHelper(context.applicationContext, "speakloop.db", null, VERSION) {
 
     companion object {
-        const val VERSION = 2
+        const val VERSION = 3
 
         /** 列顺序必须和 [read] 里的下标一致。 */
         private const val SELECT_COLS =
@@ -51,11 +69,14 @@ class Db(context: Context) :
                 "created_at INTEGER NOT NULL)"
         )
         createPlayLog(db)
+        createFollowLog(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         // v1 → v2：只加一张表，原有短语一条不动
         if (oldVersion < 2) createPlayLog(db)
+        // v2 → v3：跟读成绩落库，短语和练习记录都不动
+        if (oldVersion < 3) createFollowLog(db)
     }
 
     /** 一条短语一天一行，`times` 是那天读了几次。 */
@@ -73,6 +94,27 @@ class Db(context: Context) :
         db.execSQL(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_play_log_phrase_day " +
                 "ON play_log(phrase_id, day)"
+        )
+    }
+
+    /**
+     * 一次跟读一行。分数和录音解耦：录音最多留几条（见 [FollowReader.prune]），
+     * 但成绩要一直留着，否则「上次比这次好多少」永远看不出来。
+     */
+    private fun createFollowLog(db: SQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS follow_log (" +
+                "id INTEGER PRIMARY KEY AUTOINCREMENT," +
+                "phrase_id INTEGER NOT NULL," +
+                "at INTEGER NOT NULL," +
+                "ms INTEGER NOT NULL," +
+                "voiced_ms INTEGER NOT NULL," +
+                "avg_db REAL NOT NULL," +
+                "wpm INTEGER NOT NULL," +
+                "file TEXT NOT NULL DEFAULT '')"
+        )
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS idx_follow_phrase ON follow_log(phrase_id, at)"
         )
     }
 
@@ -156,7 +198,58 @@ class Db(context: Context) :
         val db = writableDatabase
         db.delete("phrase", "id=?", arrayOf(id.toString()))
         db.delete("play_log", "phrase_id=?", arrayOf(id.toString()))
+        db.delete("follow_log", "phrase_id=?", arrayOf(id.toString()))
     }
+
+    /** 记一次跟读。跟读本身不算「练过一条」，play_count 只在整条读完时加。 */
+    fun insertFollow(
+        phraseId: Long,
+        ms: Long,
+        voicedMs: Long,
+        avgDb: Float,
+        wpm: Int,
+        file: String
+    ): Long {
+        val v = ContentValues()
+        v.put("phrase_id", phraseId)
+        v.put("at", System.currentTimeMillis())
+        v.put("ms", ms)
+        v.put("voiced_ms", voicedMs)
+        v.put("avg_db", avgDb)
+        v.put("wpm", wpm)
+        v.put("file", file)
+        return writableDatabase.insert("follow_log", null, v)
+    }
+
+    /** 某条短语最近的跟读，新的在前。 */
+    fun follows(phraseId: Long, limit: Int): List<FollowEntry> {
+        val out = ArrayList<FollowEntry>()
+        val cursor = readableDatabase.rawQuery(
+            "SELECT id, at, ms, voiced_ms, avg_db, wpm, file FROM follow_log " +
+                "WHERE phrase_id = ? ORDER BY at DESC LIMIT $limit",
+            arrayOf(phraseId.toString())
+        )
+        try {
+            while (cursor.moveToNext()) {
+                out.add(
+                    FollowEntry(
+                        id = cursor.getLong(0),
+                        at = cursor.getLong(1),
+                        ms = cursor.getLong(2),
+                        voicedMs = cursor.getLong(3),
+                        avgDb = cursor.getFloat(4),
+                        wpm = cursor.getInt(5),
+                        file = cursor.getString(6) ?: ""
+                    )
+                )
+            }
+        } finally {
+            cursor.close()
+        }
+        return out
+    }
+
+    fun lastFollow(phraseId: Long): FollowEntry? = follows(phraseId, 1).firstOrNull()
 
     /**
      * 真的读到这条短语了（不是「按了开始」）：次数 +1，并在今天的 play_log 里记一笔。

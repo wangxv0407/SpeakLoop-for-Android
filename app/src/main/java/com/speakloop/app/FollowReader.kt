@@ -57,6 +57,34 @@ class FollowReader(private val c: Context) {
 
         /** 少于这个有效发声时长不算「说过话」，避免咳嗽一声就被判成读完 */
         private const val MIN_VOICE_MS = 400L
+
+        /** 每条短语留几段录音。多到能听出「上次和这次的差别」，又不至于攒成垃圾堆 */
+        const val KEEP_FILES = 3
+
+        /**
+         * 某条短语的录音文件，新的在前。
+         *
+         * 同时认两种命名：`f12_1730...wav` 是现在的按次留存，
+         * `f12.wav` 是 v2.2.3 之前「一句一个文件、覆盖写」的老格式 ——
+         * 一并列出，旧文件会自然排到最后被 [prune] 清掉，不用单独写迁移。
+         */
+        fun filesOf(c: Context, phraseId: Long): List<File> =
+            File(c.filesDir, "follow").listFiles()
+                ?.filter {
+                    it.name.startsWith("f$phraseId_") || it.name.startsWith("f$phraseId.")
+                }
+                ?.sortedByDescending { it.lastModified() }
+                ?: emptyList()
+
+        /** 只留最近 [KEEP_FILES] 段，多余的删掉 */
+        fun prune(c: Context, phraseId: Long) {
+            filesOf(c, phraseId).drop(KEEP_FILES).forEach { it.delete() }
+        }
+
+        /** 短语被删掉时连录音一起清，别留没人引用的 wav */
+        fun purge(c: Context, phraseId: Long) {
+            filesOf(c, phraseId).forEach { it.delete() }
+        }
     }
 
     private val main = Handler(Looper.getMainLooper())
@@ -82,7 +110,9 @@ class FollowReader(private val c: Context) {
 
     private fun dir(): File = File(c.filesDir, "follow").apply { if (!exists()) mkdirs() }
 
-    fun fileOf(phraseId: Long): File = File(dir(), "f$phraseId.wav")
+    /** 每次跟读一个新文件，这样「上一次」才留得住；旧文件由 [prune] 按条数收掉。 */
+    private fun newFile(phraseId: Long): File =
+        File(dir(), "f${phraseId}_${System.currentTimeMillis()}.wav")
 
     /**
      * 开始录。返回 false 表示麦克风被占用或没权限——调用方要给出人话提示，
@@ -93,7 +123,7 @@ class FollowReader(private val c: Context) {
         // 必须清掉上一句的结果：start 失败时 stop() 会把它原样返回，
         // 面板就会把上一句的时长/占比当成这一句显示出来
         result = null
-        val f = fileOf(phraseId)
+        val f = newFile(phraseId)
         outFile = f
 
         val frameSamples = (SR * FRAME_MS / 1000L).toInt()
