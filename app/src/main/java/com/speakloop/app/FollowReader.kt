@@ -71,7 +71,8 @@ class FollowReader(private val c: Context) {
         fun filesOf(c: Context, phraseId: Long): List<File> =
             File(c.filesDir, "follow").listFiles()
                 ?.filter {
-                    it.name.startsWith("f$phraseId_") || it.name.startsWith("f$phraseId.")
+                    // 这里的花括号不能省：`"f$phraseId_"` 会被解析成变量 phraseId_
+                    it.name.startsWith("f${phraseId}_") || it.name.startsWith("f$phraseId.")
                 }
                 ?.sortedByDescending { it.lastModified() }
                 ?: emptyList()
